@@ -69,7 +69,7 @@ definindo uma senha individual. O login inicial segue o nome normalizado; VICTOR
 `victor` e JOSÉ CARLOS usa `jose.carlos`.
 
 O administrador inicial usa o login `admin` e a senha já configurada no segredo
-`ADMIN_QUEUE_PASSWORD`. Senhas persistidas usam PBKDF2-SHA256, 210 mil iterações e
+`ADMIN_QUEUE_PASSWORD`. Senhas persistidas usam PBKDF2-SHA256, 100 mil iterações e
 salt aleatório. Sessões usam token aleatório em cookie `HttpOnly`, `Secure` e
 `SameSite=Lax`; o banco guarda apenas o hash do token por 8 horas. Após cinco falhas,
 o acesso fica bloqueado por 15 minutos.
