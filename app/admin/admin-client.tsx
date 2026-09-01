@@ -177,7 +177,6 @@ export function AdminClient({
 
         <UserManagement
           initialUsers={initialUsers}
-          queueVersion={snapshot.version}
           onQueueRefresh={refresh}
         />
 

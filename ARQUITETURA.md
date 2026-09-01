@@ -64,9 +64,10 @@ já avançaram o ciclo.
 ## Contas, sessões e administração
 
 Os dez integrantes oficiais recebem contas individuais ligadas aos respectivos
-registros. Não há senha inicial compartilhada: o administrador libera cada acesso
-definindo uma senha individual. O login inicial segue o nome normalizado; VICTOR usa
-`victor` e JOSÉ CARLOS usa `jose.carlos`.
+registros. Todos recebem a mesma senha inicial de suporte, mantida apenas no segredo
+`SUPPORT_DEFAULT_PASSWORD`; o administrador pode redefini-la individualmente com no
+mínimo 6 caracteres. O login inicial segue o nome normalizado; VICTOR usa `victor` e
+JOSÉ CARLOS usa `jose.carlos`.
 
 O administrador inicial usa o login `admin` e a senha já configurada no segredo
 `ADMIN_QUEUE_PASSWORD`. Senhas persistidas usam PBKDF2-SHA256, 100 mil iterações e
@@ -78,8 +79,10 @@ Suporte pode consultar a fila, alterar apenas o próprio status, registrar apena
 própria vez, pular a própria vez e devolver a própria retirada recente. Administrador
 pode gerenciar logins, senhas e ativação, além de consultar histórico e estatísticas.
 Alterações administrativas exigem sessão de administrador e confirmação da senha
-administrativa no servidor. Novos acessos podem ser administrativos; a equipe de
-suporte não pode ganhar integrantes fora da sequência oficial.
+administrativa no servidor. A reserva da alteração usa a versão atual do servidor,
+sem rejeitar uma edição apenas porque a fila avançou enquanto a confirmação estava
+aberta. Novos acessos podem ser administrativos; a equipe de suporte não pode ganhar
+integrantes fora da sequência oficial.
 
 Criação, edição, redefinição de senha, login e logout são registrados em
 `user_audit_log`; ações que interessam ao painel também entram em `events`.

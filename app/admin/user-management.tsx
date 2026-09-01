@@ -50,11 +50,9 @@ const emptyForm: FormState = {
 
 export function UserManagement({
   initialUsers,
-  queueVersion,
   onQueueRefresh,
 }: {
   initialUsers: ManagedUser[];
-  queueVersion: number;
   onQueueRefresh: () => Promise<unknown>;
 }) {
   const [users, setUsers] = useState(initialUsers);
@@ -96,8 +94,11 @@ export function UserManagement({
       setFormError('Defina uma senha para liberar este acesso.');
       return;
     }
-    if (form.password && form.password.length < 8) {
-      setFormError('A senha deve ter pelo menos 8 caracteres.');
+    const minimumPasswordLength = form.participatesInQueue ? 6 : 8;
+    if (form.password && form.password.length < minimumPasswordLength) {
+      setFormError(
+        `A senha deve ter pelo menos ${minimumPasswordLength} caracteres.`,
+      );
       return;
     }
     if (form.password !== form.confirmPassword) {
@@ -117,7 +118,6 @@ export function UserManagement({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: form.id,
-          version: queueVersion,
           adminPassword,
           name: form.name,
           login: form.login,
@@ -236,7 +236,8 @@ export function UserManagement({
               <DialogTitle>{form.id ? 'Editar usuário' : 'Novo administrador'}</DialogTitle>
               <DialogDescription>
                 A ordem oficial dos suportes não pode ser editada. Aqui você libera
-                acessos, redefine senhas ou cria outro administrador.
+                acessos, redefine senhas ou cria outro administrador. Senhas de
+                suporte usam no mínimo 6 caracteres; administradores, 8.
               </DialogDescription>
             </DialogHeader>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
