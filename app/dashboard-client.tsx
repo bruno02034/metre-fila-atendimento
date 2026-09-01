@@ -123,11 +123,13 @@ export function DashboardClient({
       <header className="border-b border-white/10 bg-[var(--navy)] text-white">
         <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between px-4 sm:px-6 lg:px-8">
           <a href="/" className="flex items-center gap-3" aria-label="Ir para o painel">
-            <span className="grid size-9 place-items-center rounded-xl bg-[var(--mint)] text-[var(--navy)] shadow-[0_6px_20px_rgb(46_230_166/18%)]">
-              <Headphones className="size-5" aria-hidden="true" />
-            </span>
+            <img
+              src="/metre-logo.png"
+              alt=""
+              className="size-11 shrink-0 object-contain drop-shadow-[0_6px_16px_rgb(194_70_26/25%)]"
+            />
             <div>
-              <p className="font-semibold leading-none tracking-tight">Pulso</p>
+              <p className="font-semibold leading-none tracking-tight">Metre</p>
               <p className="mt-1 text-[11px] text-white/55">Fila de atendimento</p>
             </div>
           </a>
@@ -172,7 +174,7 @@ export function DashboardClient({
                 <span className="flex items-center gap-2 text-xs text-white/55">
                   <span
                     className={`size-2 rounded-full ${
-                      snapshot.nextAgent ? 'bg-[var(--mint)]' : 'bg-white/30'
+                      snapshot.nextAgent ? 'bg-[var(--brand-light)]' : 'bg-white/30'
                     }`}
                   />
                   {snapshot.nextAgent ? 'Disponível' : 'Sem disponibilidade'}
@@ -180,7 +182,7 @@ export function DashboardClient({
               </div>
 
               <div>
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--mint)]">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--brand-light)]">
                   {snapshot.nextAgent ? 'Agora é a vez de' : 'Aguardando retorno'}
                 </p>
                 <h1 className="mt-2 break-words text-[clamp(2.7rem,7vw,5.8rem)] font-semibold leading-[.88] tracking-[-0.07em]">
@@ -196,7 +198,7 @@ export function DashboardClient({
               <div className="flex flex-col gap-3 sm:flex-row">
                 <Button
                   size="lg"
-                  className="h-12 rounded-xl bg-[var(--mint)] px-5 font-semibold text-[var(--navy)] shadow-[0_8px_24px_rgb(46_230_166/16%)] hover:bg-[var(--mint-strong)]"
+                  className="h-12 rounded-xl bg-[var(--brand)] px-5 font-semibold text-white shadow-[0_8px_24px_rgb(194_70_26/24%)] hover:bg-[var(--brand-strong)]"
                   disabled={!snapshot.nextAgent || pending}
                   onClick={() => {
                     if (!snapshot.nextAgent) return;
@@ -250,7 +252,7 @@ export function DashboardClient({
                       key={person.id}
                       className={`grid grid-cols-[36px_1fr_auto] items-center gap-3 rounded-2xl px-3 py-2.5 ${
                         isNext
-                          ? 'bg-[var(--mint-soft)] ring-1 ring-[var(--mint-line)]'
+                          ? 'bg-[var(--brand-soft)] ring-1 ring-[var(--brand-line)]'
                           : ''
                       }`}
                     >
@@ -384,7 +386,7 @@ export function DashboardClient({
                       <p className="truncate text-xs font-medium">{agent.name}</p>
                       <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--surface-muted)]">
                         <div
-                          className="h-full rounded-full bg-[var(--mint)]"
+                          className="h-full rounded-full bg-[var(--brand)]"
                           style={{ width: `${(agent.todayCount / maximum) * 100}%` }}
                         />
                       </div>

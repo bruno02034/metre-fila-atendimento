@@ -7,7 +7,6 @@ import {
   ArrowUp,
   BarChart3,
   CheckCircle2,
-  Headphones,
   History,
   Plus,
   Power,
@@ -141,11 +140,13 @@ export function AdminClient({
       <header className="border-b border-white/10 bg-[var(--navy)] text-white">
         <div className="mx-auto flex h-16 max-w-[1380px] items-center justify-between px-4 sm:px-6 lg:px-8">
           <a href="/" className="flex items-center gap-3">
-            <span className="grid size-9 place-items-center rounded-xl bg-[var(--mint)] text-[var(--navy)]">
-              <Headphones className="size-5" />
-            </span>
+            <img
+              src="/metre-logo.png"
+              alt=""
+              className="size-11 shrink-0 object-contain drop-shadow-[0_6px_16px_rgb(194_70_26/25%)]"
+            />
             <div>
-              <p className="font-semibold leading-none tracking-tight">Pulso</p>
+              <p className="font-semibold leading-none tracking-tight">Metre</p>
               <p className="mt-1 text-[11px] text-white/55">Administração</p>
             </div>
           </a>
@@ -162,7 +163,7 @@ export function AdminClient({
       <div className="mx-auto max-w-[1380px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
         <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div>
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-emerald-600">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-[var(--brand)]">
               <ShieldCheck className="size-4" />
               Controle operacional
             </div>
@@ -265,7 +266,7 @@ export function AdminClient({
           <div className="grid content-start gap-5">
             <Card className="gap-0 rounded-2xl border-0 py-0 ring-1 ring-[var(--line)]">
               <div className="flex items-center gap-3 border-b border-[var(--line)] px-5 py-4">
-                <span className="grid size-9 place-items-center rounded-xl bg-[var(--mint-soft)] text-emerald-600">
+                <span className="grid size-9 place-items-center rounded-xl bg-[var(--brand-soft)] text-[var(--brand)]">
                   <UserRoundPlus className="size-4" />
                 </span>
                 <div>

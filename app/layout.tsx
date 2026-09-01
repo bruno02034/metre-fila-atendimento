@@ -16,11 +16,15 @@ export const metadata: Metadata = {
   metadataBase: new URL(
     'https://pulso-fila-atendimento.isadoracarolinefreit.chatgpt.site',
   ),
-  title: 'Pulso — Fila de atendimento',
+  title: 'Metre — Fila de atendimento',
   description:
-    'Painel interno para distribuir atendimentos da equipe de suporte com justiça e clareza.',
+    'Painel Metre para distribuir atendimentos da equipe de suporte com justiça e clareza.',
+  icons: {
+    icon: '/metre-logo.png',
+    apple: '/metre-logo.png',
+  },
   openGraph: {
-    title: 'Pulso — Fila de atendimento',
+    title: 'Metre — Fila de atendimento',
     description:
       'Distribuição justa, status da equipe e histórico em um painel operacional compartilhado.',
     type: 'website',
@@ -30,13 +34,13 @@ export const metadata: Metadata = {
         url: 'https://pulso-fila-atendimento.isadoracarolinefreit.chatgpt.site/og.png',
         width: 1731,
         height: 909,
-        alt: 'Pulso — Fila de atendimento',
+        alt: 'Metre — Fila de atendimento',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Pulso — Fila de atendimento',
+    title: 'Metre — Fila de atendimento',
     description:
       'Distribuição justa, status da equipe e histórico em um painel operacional compartilhado.',
     images: [
