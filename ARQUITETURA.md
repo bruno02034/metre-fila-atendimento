@@ -84,6 +84,11 @@ sem rejeitar uma edição apenas porque a fila avançou enquanto a confirmação
 aberta. Novos acessos podem ser administrativos; a equipe de suporte não pode ganhar
 integrantes fora da sequência oficial.
 
+A reconciliação automática de presença é oportunista: se outra requisição já estiver
+com o bloqueio da fila, login e presença permanecem válidos e a próxima atualização
+conclui a reconciliação. Assim, uma disputa interna não transforma um login válido em
+erro para o usuário.
+
 Criação, edição, redefinição de senha, login e logout são registrados em
 `user_audit_log`; ações que interessam ao painel também entram em `events`.
 

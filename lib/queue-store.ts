@@ -462,9 +462,12 @@ export async function reconcileQueueCycle() {
     try {
       return await reconcileOnce();
     } catch (error) {
-      if (!(error instanceof QueueError) || error.status !== 409 || attempt === 1) {
+      if (!(error instanceof QueueError) || error.status !== 409) {
         throw error;
       }
+      // Another request already owns the queue lock and will reconcile its
+      // mutation. A later poll finishes any remaining presence adjustment.
+      if (attempt === 1) return false;
     }
   }
   return false;
