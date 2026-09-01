@@ -27,11 +27,60 @@ const VALID_STATUSES = new Set<AgentStatus>([
 
 const UNDO_WINDOW_MS = 5 * 60 * 1000;
 
-type DatabaseEnv = { DB: D1Database };
+type RuntimeEnv = {
+  DB: D1Database;
+  ADMIN_QUEUE_PASSWORD?: string;
+};
 let initializePromise: Promise<void> | null = null;
 
 function database() {
-  return (env as unknown as DatabaseEnv).DB;
+  return (env as unknown as RuntimeEnv).DB;
+}
+
+const NORMAL_FLOW_COMMANDS = new Set<QueueCommand['type']>([
+  'claim',
+  'undo-claim',
+  'skip',
+  'status',
+]);
+
+const ADMIN_AUDIT_DETAILS = {
+  authorizedBy: 'administrator',
+  authorizationMethod: 'password',
+} as const;
+
+async function securePasswordMatch(provided: string, configured: string) {
+  const encoder = new TextEncoder();
+  const [providedHash, configuredHash] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(provided)),
+    crypto.subtle.digest('SHA-256', encoder.encode(configured)),
+  ]);
+  const providedBytes = new Uint8Array(providedHash);
+  const configuredBytes = new Uint8Array(configuredHash);
+  let difference = 0;
+  for (let index = 0; index < configuredBytes.length; index += 1) {
+    difference |= providedBytes[index] ^ configuredBytes[index];
+  }
+  return difference === 0;
+}
+
+async function requireAdminAuthorization(command: QueueCommand) {
+  if (NORMAL_FLOW_COMMANDS.has(command.type)) return;
+
+  const configured = (env as unknown as RuntimeEnv).ADMIN_QUEUE_PASSWORD;
+  if (!configured) {
+    throw new QueueError(
+      'A autorização administrativa ainda não foi configurada.',
+      503,
+    );
+  }
+  if (
+    typeof command.adminPassword !== 'string' ||
+    command.adminPassword.length > 256 ||
+    !(await securePasswordMatch(command.adminPassword, configured))
+  ) {
+    throw new QueueError('Senha incorreta. A fila não foi alterada.', 401);
+  }
 }
 
 function nowIso() {
@@ -438,6 +487,7 @@ export async function executeCommand(command: QueueCommand) {
   if (!Number.isInteger(command.version) || command.version < 0) {
     throw new QueueError('Versão da fila inválida. Atualize a página.');
   }
+  await requireAdminAuthorization(command);
 
   const before = await getSnapshot();
   if (before.version !== command.version) {
@@ -595,7 +645,7 @@ export async function executeCommand(command: QueueCommand) {
             agentId: ticket.ownerAgentId,
             ticketId: ticket.id,
             action: 'close',
-            details: { durationSeconds: duration },
+            details: { durationSeconds: duration, ...ADMIN_AUDIT_DETAILS },
             timestamp,
           }),
         ]);
@@ -631,6 +681,7 @@ export async function executeCommand(command: QueueCommand) {
             secondaryAgentId: target.id,
             ticketId: ticket.id,
             action: 'transfer',
+            details: { ...ADMIN_AUDIT_DETAILS },
             timestamp,
           }),
         ]);
@@ -658,6 +709,7 @@ export async function executeCommand(command: QueueCommand) {
           eventStatement(db, {
             agentId: id,
             action: 'agent_added',
+            details: { ...ADMIN_AUDIT_DETAILS },
             source: 'system',
             timestamp,
           }),
@@ -684,6 +736,7 @@ export async function executeCommand(command: QueueCommand) {
           eventStatement(db, {
             agentId: agent.id,
             action: command.isActive ? 'agent_activated' : 'agent_deactivated',
+            details: { ...ADMIN_AUDIT_DETAILS },
             source: 'system',
             timestamp,
           }),
@@ -708,7 +761,7 @@ export async function executeCommand(command: QueueCommand) {
           ),
           eventStatement(db, {
             action: 'queue_reordered',
-            details: { agentIds: command.agentIds },
+            details: { agentIds: command.agentIds, ...ADMIN_AUDIT_DETAILS },
             source: 'system',
             timestamp,
           }),
@@ -728,6 +781,7 @@ export async function executeCommand(command: QueueCommand) {
           ),
           eventStatement(db, {
             action: 'queue_reset',
+            details: { ...ADMIN_AUDIT_DETAILS },
             source: 'system',
             timestamp,
           }),

@@ -20,6 +20,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { AdminAuthorizationDialog } from '@/components/admin-authorization-dialog';
 import {
   Dialog,
   DialogContent,
@@ -76,6 +77,13 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+type AdminRequest = {
+  title: string;
+  input: QueueCommandInput;
+  success: string;
+  onSuccess?: () => void;
+};
+
 export function AdminClient({
   initialSnapshot,
 }: {
@@ -84,55 +92,55 @@ export function AdminClient({
   const { snapshot, pending, mutate } = useQueue(initialSnapshot);
   const [newAgentName, setNewAgentName] = useState('');
   const [resetOpen, setResetOpen] = useState(false);
+  const [adminRequest, setAdminRequest] = useState<AdminRequest | null>(null);
   const activeAgents = snapshot.agents.filter((agent) => agent.isActive);
   const inactiveAgents = snapshot.agents.filter((agent) => !agent.isActive);
 
-  async function run(input: QueueCommandInput, success: string) {
-    try {
-      await mutate(input);
-      toast.add({ title: success, type: 'success' });
-    } catch (error) {
-      toast.add({
-        title: 'Atenção',
-        description: error instanceof Error ? error.message : 'Tente novamente.',
-        type: 'error',
-      });
-      throw error;
-    }
+  function requestAdminAction(request: AdminRequest) {
+    setAdminRequest(request);
   }
 
-  async function addAgent(event: FormEvent) {
+  async function confirmAdminAction(password: string) {
+    if (!adminRequest) return;
+    const { input, success, onSuccess } = adminRequest;
+    await mutate({ ...input, adminPassword: password } as QueueCommandInput);
+    onSuccess?.();
+    toast.add({ title: success, type: 'success' });
+    setAdminRequest(null);
+  }
+
+  function addAgent(event: FormEvent) {
     event.preventDefault();
     if (!newAgentName.trim()) return;
-    try {
-      await run({ type: 'add-agent', name: newAgentName }, 'Suporte adicionado');
-      setNewAgentName('');
-    } catch {
-      // Feedback is shown by the shared toast.
-    }
+    requestAdminAction({
+      title: `Adicionar ${newAgentName.trim().toUpperCase()} à fila?`,
+      input: { type: 'add-agent', name: newAgentName },
+      success: 'Suporte adicionado',
+      onSuccess: () => setNewAgentName(''),
+    });
   }
 
-  async function moveAgent(index: number, direction: -1 | 1) {
+  function moveAgent(index: number, direction: -1 | 1) {
     const target = index + direction;
     if (target < 0 || target >= activeAgents.length) return;
     const ids = activeAgents.map((agent) => agent.id);
     [ids[index], ids[target]] = [ids[target], ids[index]];
-    try {
-      await run({ type: 'reorder', agentIds: ids }, 'Ordem da fila atualizada');
-    } catch {
-      // Feedback is shown by the shared toast.
-    }
+    requestAdminAction({
+      title: `Alterar a posição de ${activeAgents[index].name}?`,
+      input: { type: 'reorder', agentIds: ids },
+      success: 'Ordem da fila atualizada',
+    });
   }
 
-  async function toggleAgent(agentId: string, isActive: boolean) {
-    try {
-      await run(
-        { type: 'toggle-agent', agentId, isActive },
-        isActive ? 'Suporte reativado' : 'Suporte desativado',
-      );
-    } catch {
-      // Feedback is shown by the shared toast.
-    }
+  function toggleAgent(agentId: string, isActive: boolean) {
+    const agent = snapshot.agents.find((item) => item.id === agentId);
+    requestAdminAction({
+      title: `${isActive ? 'Reativar' : 'Remover'} ${agent?.name ?? 'este suporte'} ${
+        isActive ? 'na' : 'da'
+      } fila?`,
+      input: { type: 'toggle-agent', agentId, isActive },
+      success: isActive ? 'Suporte reativado' : 'Suporte desativado',
+    });
   }
 
   return (
@@ -356,7 +364,12 @@ export function AdminClient({
                       {formatDateTime(event.occurredAt)}
                     </TableCell>
                     <TableCell className="font-medium">{event.agentName || 'Sistema'}</TableCell>
-                    <TableCell>{actionLabels[event.action] || event.action}</TableCell>
+                    <TableCell>
+                      {actionLabels[event.action] || event.action}
+                      {event.details?.authorizedBy === 'administrator'
+                        ? ' — autorizado por administrador'
+                        : ''}
+                    </TableCell>
                   </TableRow>
                 ))
               ) : (
@@ -387,7 +400,12 @@ export function AdminClient({
             <Button
               disabled={pending}
               onClick={() => {
-                void run({ type: 'reset' }, 'Fila resetada').then(() => setResetOpen(false));
+                setResetOpen(false);
+                requestAdminAction({
+                  title: 'Resetar a ordem da fila?',
+                  input: { type: 'reset' },
+                  success: 'Fila resetada',
+                });
               }}
             >
               <RefreshCcw />
@@ -396,6 +414,16 @@ export function AdminClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AdminAuthorizationDialog
+        open={Boolean(adminRequest)}
+        onOpenChange={(open) => {
+          if (!open) setAdminRequest(null);
+        }}
+        title={adminRequest?.title ?? 'Autorizar alteração'}
+        pending={pending}
+        onConfirm={confirmAdminAction}
+      />
     </main>
   );
 }
