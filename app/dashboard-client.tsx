@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ArrowRight,
   Headphones,
@@ -11,11 +11,20 @@ import {
   RotateCcw,
   Settings2,
   Trophy,
+  Undo2,
   Users,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -45,6 +54,7 @@ const statusMeta: Record<AgentStatus, { label: string; className: string }> = {
 
 const actionLabels: Record<string, string> = {
   claim: 'Pegou atendimento',
+  undo_claim: 'Devolveu o atendimento',
   skip: 'Pulou a vez',
   status_change: 'Alterou o status',
   close: 'Encerrou atendimento',
@@ -65,6 +75,9 @@ function formatTime(value: string) {
 }
 
 function eventDescription(event: QueueEvent) {
+  if (event.action === 'undo_claim') {
+    return 'Voltou para sua vez na fila';
+  }
   if (event.action === 'transfer' && event.secondaryAgentName) {
     return `para ${event.secondaryAgentName}`;
   }
@@ -81,6 +94,7 @@ export function DashboardClient({
   initialSnapshot: QueueSnapshot;
 }) {
   const { snapshot, pending, refresh, mutate } = useQueue(initialSnapshot);
+  const [undoOpen, setUndoOpen] = useState(false);
 
   const activeAgents = snapshot.agents.filter((agent) => agent.isActive);
   const ranking = useMemo(
@@ -195,38 +209,63 @@ export function DashboardClient({
                 </p>
               </div>
 
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <Button
-                  size="lg"
-                  className="h-12 rounded-xl bg-[var(--brand)] px-5 font-semibold text-white shadow-[0_8px_24px_rgb(194_70_26/24%)] hover:bg-[var(--brand-strong)]"
-                  disabled={!snapshot.nextAgent || pending}
-                  onClick={() => {
-                    if (!snapshot.nextAgent) return;
-                    void run(
-                      { type: 'claim', agentId: snapshot.nextAgent.id },
-                      'Fila avançada com sucesso',
-                    ).catch(() => undefined);
-                  }}
-                >
-                  Peguei atendimento
-                  <ArrowRight data-icon="inline-end" />
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="h-12 rounded-xl border-white/15 bg-white/5 px-5 text-white hover:bg-white/10 hover:text-white"
-                  disabled={!snapshot.nextAgent || pending}
-                  onClick={() => {
-                    if (!snapshot.nextAgent) return;
-                    void run(
-                      { type: 'skip', agentId: snapshot.nextAgent.id },
-                      'Vez pulada; fila atualizada',
-                    ).catch(() => undefined);
-                  }}
-                >
-                  <RotateCcw data-icon="inline-start" />
-                  Pular a vez
-                </Button>
+              <div className="space-y-3">
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Button
+                    size="lg"
+                    className="h-12 rounded-xl bg-[var(--brand)] px-5 font-semibold text-white shadow-[0_8px_24px_rgb(194_70_26/24%)] hover:bg-[var(--brand-strong)]"
+                    disabled={!snapshot.nextAgent || pending}
+                    onClick={() => {
+                      if (!snapshot.nextAgent) return;
+                      void run(
+                        { type: 'claim', agentId: snapshot.nextAgent.id },
+                        'Fila avançada com sucesso',
+                      ).catch(() => undefined);
+                    }}
+                  >
+                    Peguei atendimento
+                    <ArrowRight data-icon="inline-end" />
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="h-12 rounded-xl border-white/15 bg-white/5 px-5 text-white hover:bg-white/10 hover:text-white"
+                    disabled={!snapshot.nextAgent || pending}
+                    onClick={() => {
+                      if (!snapshot.nextAgent) return;
+                      void run(
+                        { type: 'skip', agentId: snapshot.nextAgent.id },
+                        'Vez pulada; fila atualizada',
+                      ).catch(() => undefined);
+                    }}
+                  >
+                    <RotateCcw data-icon="inline-start" />
+                    Pular a vez
+                  </Button>
+                </div>
+
+                {snapshot.undoCandidate ? (
+                  <div className="flex flex-col gap-3 rounded-2xl border border-white/15 bg-white/[0.07] p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-medium text-white">
+                        Retirada registrada para {snapshot.undoCandidate.agentName}
+                      </p>
+                      <p className="mt-0.5 text-[11px] leading-4 text-white/55">
+                        Disponível por 5 minutos e somente enquanto a fila não mudar.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white"
+                      disabled={pending}
+                      onClick={() => setUndoOpen(true)}
+                    >
+                      <Undo2 />
+                      Devolver para minha vez
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             </div>
           </article>
@@ -404,6 +443,41 @@ export function DashboardClient({
           <p>Última alteração às {formatTime(snapshot.updatedAt)}</p>
         </footer>
       </div>
+
+      <Dialog open={undoOpen} onOpenChange={setUndoOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Devolver atendimento?</DialogTitle>
+            <DialogDescription>
+              Tem certeza que pegou este atendimento por engano? Ao confirmar, você
+              voltará para o início da fila.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUndoOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={pending || !snapshot.undoCandidate}
+              onClick={() => {
+                if (!snapshot.undoCandidate) return;
+                void run(
+                  {
+                    type: 'undo-claim',
+                    claimEventId: snapshot.undoCandidate.claimEventId,
+                  },
+                  'Atendimento devolvido; fila restaurada',
+                )
+                  .then(() => setUndoOpen(false))
+                  .catch(() => undefined);
+              }}
+            >
+              <Undo2 />
+              Devolver para minha vez
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </main>
   );

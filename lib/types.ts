@@ -31,6 +31,13 @@ export type QueueEvent = {
   occurredAt: string;
 };
 
+export type UndoCandidate = {
+  claimEventId: string;
+  agentId: string;
+  agentName: string;
+  expiresAt: string;
+};
+
 export type QueueSnapshot = {
   version: number;
   updatedAt: string;
@@ -39,6 +46,7 @@ export type QueueSnapshot = {
   nextAgent: Agent | null;
   openTickets: OpenTicket[];
   events: QueueEvent[];
+  undoCandidate: UndoCandidate | null;
   stats: {
     todayTotal: number;
     available: number;
@@ -54,6 +62,11 @@ export type QueueCommand =
       agentId: string;
       externalId?: string;
       client?: string;
+    }
+  | {
+      type: 'undo-claim';
+      version: number;
+      claimEventId: string;
     }
   | { type: 'skip'; version: number; agentId: string; reason?: string }
   | {

@@ -54,6 +54,7 @@ const statusLabels: Record<AgentStatus, string> = {
 
 const actionLabels: Record<string, string> = {
   claim: 'Pegou atendimento',
+  undo_claim: 'Devolveu o atendimento — voltou para sua vez na fila',
   skip: 'Pulou a vez',
   status_change: 'Alterou o status',
   close: 'Encerrou atendimento',

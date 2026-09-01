@@ -25,6 +25,8 @@ const VALID_STATUSES = new Set<AgentStatus>([
   'away',
 ]);
 
+const UNDO_WINDOW_MS = 5 * 60 * 1000;
+
 type DatabaseEnv = { DB: D1Database };
 let initializePromise: Promise<void> | null = null;
 
@@ -173,10 +175,18 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
                   a.initial_position, COALESCE(c.today_count, 0) AS today_count
            FROM support_agents a
            LEFT JOIN (
-             SELECT agent_id, COUNT(*) AS today_count
-             FROM events
-             WHERE action = 'claim' AND business_date = ?
-             GROUP BY agent_id
+             SELECT claim.agent_id, COUNT(*) AS today_count
+             FROM events claim
+             WHERE claim.action = 'claim'
+               AND claim.business_date = ?
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM events undo
+                 WHERE undo.business_date = claim.business_date
+                   AND undo.action = 'undo_claim'
+                   AND json_extract(undo.details, '$.claimEventId') = claim.id
+               )
+             GROUP BY claim.agent_id
            ) c ON c.agent_id = a.id
            ORDER BY a.queue_position, a.created_at`,
         )
@@ -202,7 +212,7 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
            LEFT JOIN support_agents b ON b.id = e.secondary_agent_id
            LEFT JOIN tickets t ON t.id = e.ticket_id
            WHERE e.business_date = ?
-           ORDER BY e.occurred_at DESC
+           ORDER BY e.occurred_at DESC, e.rowid DESC
            LIMIT 60`,
         )
         .bind(date)
@@ -210,7 +220,17 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
       db
         .prepare(
           `SELECT
-             (SELECT COUNT(*) FROM events WHERE action = 'claim' AND business_date = ?) AS today_total,
+             (SELECT COUNT(*)
+              FROM events claim
+              WHERE claim.action = 'claim'
+                AND claim.business_date = ?
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM events undo
+                  WHERE undo.business_date = claim.business_date
+                    AND undo.action = 'undo_claim'
+                    AND json_extract(undo.details, '$.claimEventId') = claim.id
+                )) AS today_total,
              (SELECT COUNT(*) FROM support_agents WHERE is_active = 1 AND status = 'available') AS available,
              (SELECT COUNT(*) FROM support_agents WHERE is_active = 1 AND status = 'busy') AS busy,
              COALESCE((SELECT AVG(duration_seconds) FROM tickets WHERE business_date = ? AND status = 'closed'), 0) AS average_seconds`,
@@ -255,8 +275,21 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
     occurredAt: row.occurred_at,
   }));
 
+  const version = Number(stateResult?.version ?? 0);
+  const latestEvent = events[0] ?? null;
+  const latestVersionAfter = Number(latestEvent?.details?.versionAfter);
+  const latestPositions = latestEvent?.details?.previousPositions;
+  const latestOccurredAt = latestEvent ? Date.parse(latestEvent.occurredAt) : Number.NaN;
+  const canUndoLatestClaim =
+    latestEvent?.action === 'claim' &&
+    Boolean(latestEvent.agentId && latestEvent.agentName) &&
+    latestVersionAfter === version &&
+    Array.isArray(latestPositions) &&
+    Number.isFinite(latestOccurredAt) &&
+    Date.now() <= latestOccurredAt + UNDO_WINDOW_MS;
+
   return {
-    version: Number(stateResult?.version ?? 0),
+    version,
     updatedAt: stateResult?.updated_at ?? nowIso(),
     businessDate: date,
     agents,
@@ -265,6 +298,14 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
       null,
     openTickets,
     events,
+    undoCandidate: canUndoLatestClaim
+      ? {
+          claimEventId: latestEvent.id,
+          agentId: latestEvent.agentId as string,
+          agentName: latestEvent.agentName as string,
+          expiresAt: new Date(latestOccurredAt + UNDO_WINDOW_MS).toISOString(),
+        }
+      : null,
     stats: {
       todayTotal: Number(statsResult?.today_total ?? 0),
       available: Number(statsResult?.available ?? 0),
@@ -323,9 +364,47 @@ function cleanText(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
 
+function parsePreviousPositions(value: unknown, agents: Agent[]) {
+  if (!Array.isArray(value)) {
+    throw new QueueError('O registro original da fila está incompleto.', 409);
+  }
+
+  const positions = value.map((item) => {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      typeof (item as { id?: unknown }).id !== 'string' ||
+      !Number.isInteger((item as { position?: unknown }).position) ||
+      Number((item as { position?: unknown }).position) < 0
+    ) {
+      throw new QueueError('O registro original da fila está inválido.', 409);
+    }
+    return {
+      id: (item as { id: string }).id,
+      position: Number((item as { position: number }).position),
+    };
+  });
+
+  const currentIds = new Set(agents.map((agent) => agent.id));
+  const restoredIds = new Set(positions.map((item) => item.id));
+  if (
+    positions.length !== agents.length ||
+    restoredIds.size !== positions.length ||
+    positions.some((item) => !currentIds.has(item.id))
+  ) {
+    throw new QueueError(
+      'A composição da equipe mudou e esta retirada não pode mais ser devolvida.',
+      409,
+    );
+  }
+
+  return positions;
+}
+
 function eventStatement(
   db: D1Database,
   input: {
+    id?: string;
     agentId?: string | null;
     secondaryAgentId?: string | null;
     ticketId?: string | null;
@@ -342,7 +421,7 @@ function eventStatement(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
-      crypto.randomUUID(),
+      input.id ?? crypto.randomUUID(),
       input.agentId ?? null,
       input.secondaryAgentId ?? null,
       input.ticketId ?? null,
@@ -379,6 +458,11 @@ export async function executeCommand(command: QueueCommand) {
         if (!before.nextAgent || before.nextAgent.id !== command.agentId) {
           throw new QueueError('Esse suporte não é mais o próximo da fila.', 409);
         }
+        const claimEventId = crypto.randomUUID();
+        const previousPositions = before.agents.map((agent) => ({
+          id: agent.id,
+          position: agent.queuePosition,
+        }));
         token = await acquireLock(command.version);
         await db.batch([
           db
@@ -387,8 +471,55 @@ export async function executeCommand(command: QueueCommand) {
             )
             .bind(maxPosition + 1, timestamp, command.agentId),
           eventStatement(db, {
+            id: claimEventId,
             agentId: command.agentId,
             action: 'claim',
+            details: {
+              previousPositions,
+              versionAfter: command.version + 1,
+            },
+            timestamp,
+          }),
+        ]);
+        break;
+      }
+      case 'undo-claim': {
+        const candidate = before.undoCandidate;
+        const claimEvent = before.events.find(
+          (event) => event.id === command.claimEventId,
+        );
+        if (
+          !candidate ||
+          candidate.claimEventId !== command.claimEventId ||
+          !claimEvent ||
+          Date.parse(candidate.expiresAt) < Date.parse(timestamp)
+        ) {
+          throw new QueueError(
+            'Esta retirada não pode mais ser devolvida porque a fila mudou ou o prazo expirou.',
+            409,
+          );
+        }
+        const previousPositions = parsePreviousPositions(
+          claimEvent.details?.previousPositions,
+          before.agents,
+        );
+        token = await acquireLock(command.version);
+        await db.batch([
+          ...previousPositions.map(({ id, position }) =>
+            db
+              .prepare(
+                'UPDATE support_agents SET queue_position = ?, updated_at = ? WHERE id = ?',
+              )
+              .bind(position, timestamp, id),
+          ),
+          eventStatement(db, {
+            agentId: candidate.agentId,
+            action: 'undo_claim',
+            details: {
+              claimEventId: candidate.claimEventId,
+              reason: 'retirada_por_engano',
+              versionAfter: command.version + 1,
+            },
             timestamp,
           }),
         ]);
