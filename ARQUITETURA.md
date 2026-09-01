@@ -52,6 +52,14 @@ Tabelas principais:
 
 Índices atendem as consultas do painel, especialmente ordem ativa e eventos do dia.
 
+## Autorização administrativa
+
+Os comandos `claim` (**Peguei atendimento**), `undo-claim` (**Devolver para minha vez**), `skip` (**Pular a vez**) e `status` (**Alterar status**) pertencem ao fluxo normal e não pedem senha. Os comandos administrativos — adicionar, ativar/desativar, reordenar, transferir, encerrar manualmente e resetar — exigem autorização administrativa no servidor.
+
+A senha é recebida por um campo do tipo `password`, enviada apenas na requisição da ação e comparada no servidor com o segredo `ADMIN_QUEUE_PASSWORD`. O valor não é persistido, não integra o código do navegador e nunca é incluído nos eventos. A comparação usa resumos SHA-256 e o backend rejeita a ação antes de adquirir o bloqueio da fila quando a autorização estiver ausente ou incorreta.
+
+Cada comando protegido acrescenta `authorizedBy: administrator` e `authorizationMethod: password` aos detalhes do evento correspondente, mantendo data, horário, ação e suporte afetado no histórico auditável.
+
 ## Integração futura com TiFlux
 
 O fluxo atual usa comandos normalizados de rotação e disponibilidade (`claim`, `undo-claim`, `skip` e `status`). Uma integração futura pode adaptar eventos reais do TiFlux para esses comandos; nenhum endpoint externo foi presumido.

@@ -78,14 +78,22 @@ function eventDescription(event: QueueEvent) {
   if (event.action === 'undo_claim') {
     return 'Voltou para sua vez na fila';
   }
+  const auditLabel =
+    event.details?.authorizedBy === 'administrator'
+      ? 'Alteração manual autorizada por administrador'
+      : '';
   if (event.action === 'transfer' && event.secondaryAgentName) {
-    return `para ${event.secondaryAgentName}`;
+    return [`para ${event.secondaryAgentName}`, auditLabel].filter(Boolean).join(' · ');
   }
-  if (event.externalId) return event.externalId;
+  if (event.externalId) {
+    return [event.externalId, auditLabel].filter(Boolean).join(' · ');
+  }
   if (event.action === 'status_change' && event.details?.to) {
-    return statusMeta[event.details.to as AgentStatus]?.label ?? '';
+    return [statusMeta[event.details.to as AgentStatus]?.label ?? '', auditLabel]
+      .filter(Boolean)
+      .join(' · ');
   }
-  return '';
+  return auditLabel;
 }
 
 export function DashboardClient({

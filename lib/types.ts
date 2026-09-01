@@ -55,7 +55,7 @@ export type QueueSnapshot = {
   };
 };
 
-export type QueueCommand =
+export type QueueCommand = (
   | {
       type: 'claim';
       version: number;
@@ -90,7 +90,8 @@ export type QueueCommand =
       isActive: boolean;
     }
   | { type: 'reorder'; version: number; agentIds: string[] }
-  | { type: 'reset'; version: number };
+  | { type: 'reset'; version: number }
+) & { adminPassword?: string };
 
 export type QueueCommandInput = QueueCommand extends infer Command
   ? Command extends { version: number }
