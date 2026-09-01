@@ -1,35 +1,19 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
 import {
-  ArrowDown,
   ArrowLeft,
-  ArrowUp,
   BarChart3,
   CheckCircle2,
   History,
-  Plus,
-  Power,
-  RefreshCcw,
-  Settings2,
+  LockKeyhole,
+  LogOut,
   ShieldCheck,
-  UserMinus,
-  UserRoundPlus,
   Users,
 } from 'lucide-react';
+import { UserManagement } from '@/app/admin/user-management';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { AdminAuthorizationDialog } from '@/components/admin-authorization-dialog';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -38,13 +22,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Toaster, toast } from '@/components/ui/toast';
+import { Toaster } from '@/components/ui/toast';
 import { useQueue } from '@/hooks/use-queue';
-import type {
-  AgentStatus,
-  QueueCommandInput,
-  QueueSnapshot,
-} from '@/lib/types';
+import type { AgentStatus, ManagedUser, QueueView } from '@/lib/types';
 
 const statusLabels: Record<AgentStatus, string> = {
   available: 'Disponível',
@@ -55,16 +35,13 @@ const statusLabels: Record<AgentStatus, string> = {
 
 const actionLabels: Record<string, string> = {
   claim: 'Pegou atendimento',
-  undo_claim: 'Devolveu o atendimento — voltou para sua vez na fila',
+  undo_claim: 'Devolveu o atendimento — voltou para sua vez',
   skip: 'Pulou a vez',
+  automatic_skip: 'Foi pulado automaticamente',
   status_change: 'Alterou o status',
-  close: 'Encerrou atendimento',
-  transfer: 'Transferiu atendimento',
-  agent_added: 'Adicionou suporte',
-  agent_activated: 'Ativou suporte',
-  agent_deactivated: 'Desativou suporte',
-  queue_reordered: 'Reordenou a fila',
-  queue_reset: 'Resetou a fila',
+  user_created: 'Criou um acesso',
+  user_updated: 'Atualizou um acesso',
+  user_updated_password_reset: 'Atualizou o acesso e redefiniu a senha',
 };
 
 function formatDateTime(value: string) {
@@ -77,70 +54,18 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
-type AdminRequest = {
-  title: string;
-  input: QueueCommandInput;
-  success: string;
-  onSuccess?: () => void;
-};
-
 export function AdminClient({
   initialSnapshot,
+  initialUsers,
 }: {
-  initialSnapshot: QueueSnapshot;
+  initialSnapshot: QueueView;
+  initialUsers: ManagedUser[];
 }) {
-  const { snapshot, pending, mutate } = useQueue(initialSnapshot);
-  const [newAgentName, setNewAgentName] = useState('');
-  const [resetOpen, setResetOpen] = useState(false);
-  const [adminRequest, setAdminRequest] = useState<AdminRequest | null>(null);
-  const activeAgents = snapshot.agents.filter((agent) => agent.isActive);
-  const inactiveAgents = snapshot.agents.filter((agent) => !agent.isActive);
+  const { snapshot, refresh } = useQueue(initialSnapshot);
 
-  function requestAdminAction(request: AdminRequest) {
-    setAdminRequest(request);
-  }
-
-  async function confirmAdminAction(password: string) {
-    if (!adminRequest) return;
-    const { input, success, onSuccess } = adminRequest;
-    await mutate({ ...input, adminPassword: password } as QueueCommandInput);
-    onSuccess?.();
-    toast.add({ title: success, type: 'success' });
-    setAdminRequest(null);
-  }
-
-  function addAgent(event: FormEvent) {
-    event.preventDefault();
-    if (!newAgentName.trim()) return;
-    requestAdminAction({
-      title: `Adicionar ${newAgentName.trim().toUpperCase()} à fila?`,
-      input: { type: 'add-agent', name: newAgentName },
-      success: 'Suporte adicionado',
-      onSuccess: () => setNewAgentName(''),
-    });
-  }
-
-  function moveAgent(index: number, direction: -1 | 1) {
-    const target = index + direction;
-    if (target < 0 || target >= activeAgents.length) return;
-    const ids = activeAgents.map((agent) => agent.id);
-    [ids[index], ids[target]] = [ids[target], ids[index]];
-    requestAdminAction({
-      title: `Alterar a posição de ${activeAgents[index].name}?`,
-      input: { type: 'reorder', agentIds: ids },
-      success: 'Ordem da fila atualizada',
-    });
-  }
-
-  function toggleAgent(agentId: string, isActive: boolean) {
-    const agent = snapshot.agents.find((item) => item.id === agentId);
-    requestAdminAction({
-      title: `${isActive ? 'Reativar' : 'Remover'} ${agent?.name ?? 'este suporte'} ${
-        isActive ? 'na' : 'da'
-      } fila?`,
-      input: { type: 'toggle-agent', agentId, isActive },
-      success: isActive ? 'Suporte reativado' : 'Suporte desativado',
-    });
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    window.location.assign('/login');
   }
 
   return (
@@ -149,49 +74,55 @@ export function AdminClient({
       <header className="border-b border-white/10 bg-[var(--navy)] text-white">
         <div className="mx-auto flex h-16 max-w-[1380px] items-center justify-between px-4 sm:px-6 lg:px-8">
           <a href="/" className="flex items-center gap-3">
-            <img
-              src="/metre-logo.png"
-              alt=""
-              className="size-11 shrink-0 object-contain drop-shadow-[0_6px_16px_rgb(194_70_26/25%)]"
-            />
+            <img src="/metre-logo.png" alt="" className="size-11 shrink-0 object-contain" />
             <div>
               <p className="font-semibold leading-none tracking-tight">Metre</p>
               <p className="mt-1 text-[11px] text-white/55">Administração</p>
             </div>
           </a>
-          <a
-            href="/"
-            className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            <ArrowLeft className="size-3.5" />
-            Voltar à operação
-          </a>
+          <div className="flex items-center gap-1">
+            <span className="hidden px-3 text-xs text-white/65 md:inline">
+              Olá, <strong className="font-medium text-white">{snapshot.viewer.name}</strong>
+            </span>
+            <a
+              href="/"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <ArrowLeft className="size-3.5" />
+              Voltar à operação
+            </a>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-white/65 hover:bg-white/10 hover:text-white"
+              aria-label="Sair"
+              onClick={() => void logout()}
+            >
+              <LogOut />
+            </Button>
+          </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1380px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-[var(--brand)]">
-              <ShieldCheck className="size-4" />
-              Controle operacional
-            </div>
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.05em]">Administração da fila</h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Organize a equipe sem apagar o histórico. Desativar um suporte o remove
-              da rotação, mas preserva seus registros.
-            </p>
+        <div className="mb-6">
+          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-[var(--brand)]">
+            <ShieldCheck className="size-4" />
+            Controle operacional
           </div>
-          <Button variant="outline" onClick={() => setResetOpen(true)} disabled={pending}>
-            <RefreshCcw />
-            Resetar ordem inicial
-          </Button>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.05em]">
+            Administração da fila
+          </h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            A sequência de atendimento é oficial e imutável. A administração pode
+            gerenciar acessos e disponibilidade, mas não pode reordenar pessoas.
+          </p>
         </div>
 
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { label: 'Equipe ativa', value: activeAgents.length, icon: Users },
-            { label: 'Disponíveis', value: snapshot.stats.available, icon: CheckCircle2 },
+            { label: 'Equipe oficial', value: snapshot.agents.length, icon: Users },
+            { label: 'Disponíveis online', value: snapshot.stats.available, icon: CheckCircle2 },
             { label: 'Atendimentos hoje', value: snapshot.stats.todayTotal, icon: BarChart3 },
             { label: 'Registros hoje', value: snapshot.events.length, icon: History },
           ].map(({ label, value, icon: Icon }) => (
@@ -209,132 +140,46 @@ export function AdminClient({
           ))}
         </section>
 
-        <section className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(330px,.8fr)]">
-          <Card className="gap-0 rounded-2xl border-0 py-0 ring-1 ring-[var(--line)]">
-            <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
-              <div className="flex items-center gap-3">
-                <span className="grid size-9 place-items-center rounded-xl bg-[var(--surface-muted)] text-[var(--slate)]">
-                  <Settings2 className="size-4" />
+        <Card className="mt-5 gap-0 rounded-2xl border-0 py-0 ring-1 ring-[var(--line)]">
+          <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
+            <div className="flex items-center gap-3">
+              <span className="grid size-9 place-items-center rounded-xl bg-[var(--surface-muted)] text-[var(--slate)]">
+                <LockKeyhole className="size-4" />
+              </span>
+              <div>
+                <h2 className="text-sm font-semibold">Ordem oficial fixa</h2>
+                <p className="text-[10px] text-muted-foreground">
+                  O ciclo avança sem mover nenhuma pessoa de posição
+                </p>
+              </div>
+            </div>
+            <Badge variant="outline">Imutável</Badge>
+          </div>
+          <ol className="grid gap-x-8 px-5 py-2 md:grid-cols-2">
+            {snapshot.agents.map((agent) => (
+              <li key={agent.id} className="grid grid-cols-[36px_1fr_auto] items-center gap-3 border-b border-[var(--line)] py-3.5">
+                <span className="grid size-8 place-items-center rounded-xl bg-[var(--navy)] text-xs font-semibold text-white">
+                  {String(agent.queuePosition + 1).padStart(2, '0')}
                 </span>
-                <div>
-                  <h2 className="text-sm font-semibold">Ordem e equipe ativa</h2>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{agent.name}</p>
                   <p className="text-[10px] text-muted-foreground">
-                    Use as setas para alterar a sequência imediatamente
+                    {statusLabels[agent.status]} · {agent.online ? 'online' : 'offline'} · {agent.todayCount} hoje
                   </p>
                 </div>
-              </div>
-              <Badge variant="outline">{activeAgents.length} ativos</Badge>
-            </div>
-            <ol className="divide-y divide-[var(--line)] px-5">
-              {activeAgents.map((agent, index) => (
-                <li key={agent.id} className="grid grid-cols-[36px_1fr_auto] items-center gap-3 py-3.5">
-                  <span className="grid size-8 place-items-center rounded-xl bg-[var(--navy)] text-xs font-semibold text-white">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{agent.name}</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {statusLabels[agent.status]} · {agent.todayCount} hoje
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Mover ${agent.name} para cima`}
-                      disabled={pending || index === 0}
-                      onClick={() => void moveAgent(index, -1)}
-                    >
-                      <ArrowUp />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Mover ${agent.name} para baixo`}
-                      disabled={pending || index === activeAgents.length - 1}
-                      onClick={() => void moveAgent(index, 1)}
-                    >
-                      <ArrowDown />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-muted-foreground hover:text-destructive"
-                      aria-label={`Desativar ${agent.name}`}
-                      disabled={pending}
-                      onClick={() => void toggleAgent(agent.id, false)}
-                    >
-                      <UserMinus />
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </Card>
+                {snapshot.nextAgent?.id === agent.id ? (
+                  <Badge className="bg-[var(--brand)] text-white">Próximo</Badge>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </Card>
 
-          <div className="grid content-start gap-5">
-            <Card className="gap-0 rounded-2xl border-0 py-0 ring-1 ring-[var(--line)]">
-              <div className="flex items-center gap-3 border-b border-[var(--line)] px-5 py-4">
-                <span className="grid size-9 place-items-center rounded-xl bg-[var(--brand-soft)] text-[var(--brand)]">
-                  <UserRoundPlus className="size-4" />
-                </span>
-                <div>
-                  <h2 className="text-sm font-semibold">Adicionar suporte</h2>
-                  <p className="text-[10px] text-muted-foreground">Entra no fim da fila</p>
-                </div>
-              </div>
-              <form onSubmit={addAgent} className="flex gap-2 p-5">
-                <Input
-                  value={newAgentName}
-                  onChange={(event) => setNewAgentName(event.target.value)}
-                  placeholder="Nome do suporte"
-                  maxLength={60}
-                />
-                <Button type="submit" disabled={pending || !newAgentName.trim()}>
-                  <Plus />
-                  Adicionar
-                </Button>
-              </form>
-            </Card>
-
-            <Card className="gap-0 rounded-2xl border-0 py-0 ring-1 ring-[var(--line)]">
-              <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <span className="grid size-9 place-items-center rounded-xl bg-[var(--surface-muted)] text-[var(--slate)]">
-                    <Power className="size-4" />
-                  </span>
-                  <div>
-                    <h2 className="text-sm font-semibold">Fora da rotação</h2>
-                    <p className="text-[10px] text-muted-foreground">Histórico preservado</p>
-                  </div>
-                </div>
-                <Badge variant="outline">{inactiveAgents.length}</Badge>
-              </div>
-              {inactiveAgents.length ? (
-                <div className="divide-y divide-[var(--line)] px-5">
-                  {inactiveAgents.map((agent) => (
-                    <div key={agent.id} className="flex items-center justify-between gap-3 py-3.5">
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">{agent.name}</p>
-                        <p className="text-[10px] text-muted-foreground">Desativado</p>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={pending}
-                        onClick={() => void toggleAgent(agent.id, true)}
-                      >
-                        Reativar
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="p-5 text-xs text-muted-foreground">Ninguém desativado.</p>
-              )}
-            </Card>
-          </div>
-        </section>
+        <UserManagement
+          initialUsers={initialUsers}
+          queueVersion={snapshot.version}
+          onQueueRefresh={refresh}
+        />
 
         <Card className="mt-5 gap-0 rounded-2xl border-0 py-0 ring-1 ring-[var(--line)]">
           <div className="flex items-center gap-3 border-b border-[var(--line)] px-5 py-4">
@@ -344,7 +189,7 @@ export function AdminClient({
             <div>
               <h2 className="text-sm font-semibold">Histórico de hoje</h2>
               <p className="text-[10px] text-muted-foreground">
-                Registro auditável das mudanças da fila
+                Atendimentos, pulos automáticos e ações administrativas
               </p>
             </div>
           </div>
@@ -366,8 +211,8 @@ export function AdminClient({
                     <TableCell className="font-medium">{event.agentName || 'Sistema'}</TableCell>
                     <TableCell>
                       {actionLabels[event.action] || event.action}
-                      {event.details?.authorizedBy === 'administrator'
-                        ? ' — autorizado por administrador'
+                      {event.secondaryAgentName && event.action === 'automatic_skip'
+                        ? ` — direcionado para ${event.secondaryAgentName}`
                         : ''}
                     </TableCell>
                   </TableRow>
@@ -383,47 +228,6 @@ export function AdminClient({
           </Table>
         </Card>
       </div>
-
-      <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Resetar a ordem da fila?</DialogTitle>
-            <DialogDescription>
-              A equipe ativa volta à ordem inicial de cadastro. Status, contagens e
-              histórico não serão apagados.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setResetOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={pending}
-              onClick={() => {
-                setResetOpen(false);
-                requestAdminAction({
-                  title: 'Resetar a ordem da fila?',
-                  input: { type: 'reset' },
-                  success: 'Fila resetada',
-                });
-              }}
-            >
-              <RefreshCcw />
-              Confirmar reset
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <AdminAuthorizationDialog
-        open={Boolean(adminRequest)}
-        onOpenChange={(open) => {
-          if (!open) setAdminRequest(null);
-        }}
-        title={adminRequest?.title ?? 'Autorizar alteração'}
-        pending={pending}
-        onConfirm={confirmAdminAction}
-      />
     </main>
   );
 }

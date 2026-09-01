@@ -1,4 +1,24 @@
 export type AgentStatus = 'available' | 'busy' | 'paused' | 'away';
+export type UserRole = 'support' | 'admin';
+
+export type SessionUser = {
+  id: string;
+  agentId: string | null;
+  name: string;
+  login: string;
+  role: UserRole;
+  isActive: boolean;
+  participatesInQueue: boolean;
+  passwordConfigured: boolean;
+};
+
+export type ManagedUser = SessionUser & {
+  status: AgentStatus | null;
+  queuePosition: number | null;
+  lastLoginAt: string | null;
+  online: boolean;
+  createdAt: string;
+};
 
 export type Agent = {
   id: string;
@@ -8,6 +28,7 @@ export type Agent = {
   queuePosition: number;
   initialPosition: number;
   todayCount: number;
+  online: boolean;
 };
 
 export type OpenTicket = {
@@ -47,11 +68,26 @@ export type QueueSnapshot = {
   openTickets: OpenTicket[];
   events: QueueEvent[];
   undoCandidate: UndoCandidate | null;
+  turn: {
+    sequence: number;
+    nextAgentId: string | null;
+    cursorPosition: number;
+    startedAt: string;
+  };
   stats: {
     todayTotal: number;
     available: number;
     busy: number;
     averageSeconds: number;
+  };
+};
+
+export type QueueView = QueueSnapshot & {
+  viewer: SessionUser;
+  turnAlert: {
+    key: string | null;
+    shouldAlert: boolean;
+    acknowledgedAt: string | null;
   };
 };
 
@@ -75,22 +111,6 @@ export type QueueCommand = (
       agentId: string;
       status: AgentStatus;
     }
-  | { type: 'close'; version: number; ticketId: string }
-  | {
-      type: 'transfer';
-      version: number;
-      ticketId: string;
-      targetAgentId: string;
-    }
-  | { type: 'add-agent'; version: number; name: string }
-  | {
-      type: 'toggle-agent';
-      version: number;
-      agentId: string;
-      isActive: boolean;
-    }
-  | { type: 'reorder'; version: number; agentIds: string[] }
-  | { type: 'reset'; version: number }
 ) & { adminPassword?: string };
 
 export type QueueCommandInput = QueueCommand extends infer Command

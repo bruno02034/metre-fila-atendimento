@@ -8,6 +8,13 @@
       "when": 1788264680676,
       "tag": "0000_whole_wasp",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788290074033,
+      "tag": "0001_warm_slyde",
+      "breakpoints": true
     }
   ]
 }
