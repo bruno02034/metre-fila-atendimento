@@ -370,7 +370,6 @@ export async function executeCommand(command: QueueCommand) {
 
   const db = database();
   const timestamp = nowIso();
-  const date = businessDate(new Date(timestamp));
   const maxPosition = Math.max(-1, ...before.agents.map((agent) => agent.queuePosition));
   let token: string | null = null;
 
@@ -380,28 +379,16 @@ export async function executeCommand(command: QueueCommand) {
         if (!before.nextAgent || before.nextAgent.id !== command.agentId) {
           throw new QueueError('Esse suporte não é mais o próximo da fila.', 409);
         }
-        const ticketId = crypto.randomUUID();
-        const externalId = cleanText(command.externalId, 80).toUpperCase() || null;
-        const client = cleanText(command.client, 120) || null;
         token = await acquireLock(command.version);
         await db.batch([
           db
             .prepare(
-              "UPDATE support_agents SET status = 'busy', queue_position = ?, updated_at = ? WHERE id = ? AND is_active = 1",
+              'UPDATE support_agents SET queue_position = ?, updated_at = ? WHERE id = ? AND is_active = 1',
             )
             .bind(maxPosition + 1, timestamp, command.agentId),
-          db
-            .prepare(
-              `INSERT INTO tickets
-               (id, external_id, client, owner_agent_id, status, source, business_date, started_at)
-               VALUES (?, ?, ?, ?, 'open', 'manual', ?, ?)`,
-            )
-            .bind(ticketId, externalId, client, command.agentId, date, timestamp),
           eventStatement(db, {
             agentId: command.agentId,
-            ticketId,
             action: 'claim',
-            details: { externalId, client },
             timestamp,
           }),
         ]);
@@ -432,14 +419,6 @@ export async function executeCommand(command: QueueCommand) {
         const agent = before.agents.find((item) => item.id === command.agentId);
         if (!agent?.isActive || !VALID_STATUSES.has(command.status)) {
           throw new QueueError('Suporte ou status inválido.');
-        }
-        if (
-          command.status === 'available' &&
-          before.openTickets.some((ticket) => ticket.ownerAgentId === agent.id)
-        ) {
-          throw new QueueError(
-            'Encerre ou transfira os atendimentos antes de marcar como disponível.',
-          );
         }
         token = await acquireLock(command.version);
         await db.batch([
@@ -557,12 +536,6 @@ export async function executeCommand(command: QueueCommand) {
       case 'toggle-agent': {
         const agent = before.agents.find((item) => item.id === command.agentId);
         if (!agent) throw new QueueError('Suporte não encontrado.');
-        if (
-          !command.isActive &&
-          before.openTickets.some((ticket) => ticket.ownerAgentId === agent.id)
-        ) {
-          throw new QueueError('Transfira ou encerre os atendimentos antes de desativar.');
-        }
         token = await acquireLock(command.version);
         await db.batch([
           db

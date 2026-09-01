@@ -1,11 +1,8 @@
 'use client';
 
-import { FormEvent, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
   ArrowRight,
-  ArrowUpRight,
-  CheckCircle2,
-  Clock3,
   Headphones,
   History,
   LayoutDashboard,
@@ -14,21 +11,11 @@ import {
   RotateCcw,
   Settings2,
   Trophy,
-  UserRoundCheck,
   Users,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -41,24 +28,19 @@ import { useQueue } from '@/hooks/use-queue';
 import type {
   Agent,
   AgentStatus,
-  OpenTicket,
   QueueCommandInput,
   QueueEvent,
   QueueSnapshot,
 } from '@/lib/types';
 
-const statusMeta: Record<
-  AgentStatus,
-  { label: string; className: string; icon: typeof CheckCircle2 }
-> = {
+const statusMeta: Record<AgentStatus, { label: string; className: string }> = {
   available: {
     label: 'Disponível',
     className: 'status-available',
-    icon: UserRoundCheck,
   },
-  busy: { label: 'Ocupado', className: 'status-busy', icon: Headphones },
-  paused: { label: 'Pausado', className: 'status-paused', icon: PauseCircle },
-  away: { label: 'Ausente', className: 'status-away', icon: Users },
+  busy: { label: 'Ocupado', className: 'status-busy' },
+  paused: { label: 'Pausado', className: 'status-paused' },
+  away: { label: 'Ausente', className: 'status-away' },
 };
 
 const actionLabels: Record<string, string> = {
@@ -82,19 +64,6 @@ function formatTime(value: string) {
   }).format(new Date(value));
 }
 
-function formatDuration(seconds: number) {
-  if (!seconds) return '—';
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}min`;
-}
-
-function elapsed(value: string) {
-  const seconds = Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1000));
-  return formatDuration(seconds);
-}
-
 function eventDescription(event: QueueEvent) {
   if (event.action === 'transfer' && event.secondaryAgentName) {
     return `para ${event.secondaryAgentName}`;
@@ -112,11 +81,6 @@ export function DashboardClient({
   initialSnapshot: QueueSnapshot;
 }) {
   const { snapshot, pending, refresh, mutate } = useQueue(initialSnapshot);
-  const [claimOpen, setClaimOpen] = useState(false);
-  const [ticketCode, setTicketCode] = useState('');
-  const [client, setClient] = useState('');
-  const [transferTicket, setTransferTicket] = useState<OpenTicket | null>(null);
-  const [targetAgentId, setTargetAgentId] = useState('');
 
   const activeAgents = snapshot.agents.filter((agent) => agent.isActive);
   const ranking = useMemo(
@@ -141,27 +105,6 @@ export function DashboardClient({
     }
   }
 
-  async function handleClaim(event: FormEvent) {
-    event.preventDefault();
-    if (!snapshot.nextAgent) return;
-    try {
-      await run(
-        {
-          type: 'claim',
-          agentId: snapshot.nextAgent.id,
-          externalId: ticketCode,
-          client,
-        },
-        'Atendimento registrado',
-      );
-      setClaimOpen(false);
-      setTicketCode('');
-      setClient('');
-    } catch {
-      // Feedback is shown by the shared toast.
-    }
-  }
-
   async function changeStatus(agent: Agent, status: AgentStatus) {
     if (agent.status === status) return;
     try {
@@ -169,33 +112,6 @@ export function DashboardClient({
         { type: 'status', agentId: agent.id, status },
         `${agent.name} está ${statusMeta[status].label.toLowerCase()}`,
       );
-    } catch {
-      // Feedback is shown by the shared toast.
-    }
-  }
-
-  async function finishTicket(ticket: OpenTicket) {
-    try {
-      await run({ type: 'close', ticketId: ticket.id }, 'Atendimento encerrado');
-    } catch {
-      // Feedback is shown by the shared toast.
-    }
-  }
-
-  async function handleTransfer(event: FormEvent) {
-    event.preventDefault();
-    if (!transferTicket || !targetAgentId) return;
-    try {
-      await run(
-        {
-          type: 'transfer',
-          ticketId: transferTicket.id,
-          targetAgentId,
-        },
-        'Atendimento transferido',
-      );
-      setTransferTicket(null);
-      setTargetAgentId('');
     } catch {
       // Feedback is shown by the shared toast.
     }
@@ -272,7 +188,7 @@ export function DashboardClient({
                 </h1>
                 <p className="mt-4 max-w-xl text-sm leading-6 text-white/55">
                   {snapshot.nextAgent
-                    ? `É a vez de ${snapshot.nextAgent.name} pegar o próximo atendimento. Ao confirmar, essa pessoa vai para o fim da fila.`
+                    ? `É a vez de ${snapshot.nextAgent.name} pegar o próximo atendimento. Ao clicar no botão, essa pessoa vai direto para o fim da fila.`
                     : 'Marque ao menos uma pessoa como disponível para retomar a distribuição.'}
                 </p>
               </div>
@@ -282,7 +198,13 @@ export function DashboardClient({
                   size="lg"
                   className="h-12 rounded-xl bg-[var(--mint)] px-5 font-semibold text-[var(--navy)] shadow-[0_8px_24px_rgb(46_230_166/16%)] hover:bg-[var(--mint-strong)]"
                   disabled={!snapshot.nextAgent || pending}
-                  onClick={() => setClaimOpen(true)}
+                  onClick={() => {
+                    if (!snapshot.nextAgent) return;
+                    void run(
+                      { type: 'claim', agentId: snapshot.nextAgent.id },
+                      'Fila avançada com sucesso',
+                    ).catch(() => undefined);
+                  }}
                 >
                   Peguei atendimento
                   <ArrowRight data-icon="inline-end" />
@@ -386,12 +308,12 @@ export function DashboardClient({
         <section className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             { label: 'Atendimentos hoje', value: snapshot.stats.todayTotal, icon: Headphones },
+            { label: 'Pessoas na fila', value: activeAgents.length, icon: Users },
             { label: 'Disponíveis agora', value: snapshot.stats.available, icon: Users },
-            { label: 'Em atendimento', value: snapshot.stats.busy, icon: CheckCircle2 },
             {
-              label: 'Tempo médio',
-              value: formatDuration(snapshot.stats.averageSeconds),
-              icon: Clock3,
+              label: 'Indisponíveis agora',
+              value: activeAgents.length - snapshot.stats.available,
+              icon: PauseCircle,
             },
           ].map(({ label, value, icon: Icon }) => (
             <Card
@@ -411,58 +333,7 @@ export function DashboardClient({
           ))}
         </section>
 
-        <section className="mt-4 grid gap-4 xl:grid-cols-[1fr_1fr_.78fr]">
-          <OperationalCard
-            title="Em atendimento"
-            subtitle={`${snapshot.openTickets.length} atendimento${snapshot.openTickets.length === 1 ? '' : 's'} aberto${snapshot.openTickets.length === 1 ? '' : 's'}`}
-            icon={Headphones}
-          >
-            {snapshot.openTickets.length ? (
-              <div className="divide-y divide-[var(--line)]">
-                {snapshot.openTickets.map((ticket) => (
-                  <div key={ticket.id} className="flex items-center gap-3 px-5 py-3.5">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-rose-50 text-rose-500">
-                      <Headphones className="size-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium">{ticket.ownerName}</p>
-                        <span className="text-[10px] text-muted-foreground">
-                          {elapsed(ticket.startedAt)}
-                        </span>
-                      </div>
-                      <p className="truncate text-[11px] text-muted-foreground">
-                        {ticket.externalId || 'Sem ticket informado'}
-                        {ticket.client ? ` · ${ticket.client}` : ''}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() => {
-                        setTransferTicket(ticket);
-                        setTargetAgentId('');
-                      }}
-                    >
-                      Transferir
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={pending}
-                      onClick={() => void finishTicket(ticket)}
-                    >
-                      Encerrar
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyRow text="Nenhum atendimento aberto agora." />
-            )}
-          </OperationalCard>
-
+        <section className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_.8fr]">
           <OperationalCard
             title="Atividade recente"
             subtitle="Histórico do dia"
@@ -532,96 +403,6 @@ export function DashboardClient({
         </footer>
       </div>
 
-      <Dialog open={claimOpen} onOpenChange={setClaimOpen}>
-        <DialogContent className="sm:max-w-md">
-          <form onSubmit={handleClaim}>
-            <DialogHeader>
-              <DialogTitle>Registrar atendimento</DialogTitle>
-              <DialogDescription>
-                {snapshot.nextAgent?.name} será marcado como ocupado e irá para o
-                fim da fila. Os dados do ticket são opcionais.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-5">
-              <label className="grid gap-1.5 text-xs font-medium">
-                Ticket
-                <Input
-                  value={ticketCode}
-                  onChange={(event) => setTicketCode(event.target.value)}
-                  placeholder="Ex.: TF-1042"
-                  autoFocus
-                />
-              </label>
-              <label className="grid gap-1.5 text-xs font-medium">
-                Cliente
-                <Input
-                  value={client}
-                  onChange={(event) => setClient(event.target.value)}
-                  placeholder="Nome do cliente (opcional)"
-                />
-              </label>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setClaimOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={pending || !snapshot.nextAgent}>
-                {pending ? 'Registrando…' : 'Confirmar atendimento'}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={Boolean(transferTicket)}
-        onOpenChange={(open) => {
-          if (!open) setTransferTicket(null);
-        }}
-      >
-        <DialogContent>
-          <form onSubmit={handleTransfer}>
-            <DialogHeader>
-              <DialogTitle>Transferir atendimento</DialogTitle>
-              <DialogDescription>
-                A transferência não conta como um novo atendimento e não altera a
-                ordem da fila.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-5">
-              <label className="grid gap-1.5 text-xs font-medium">
-                Transferir para
-                <Select
-                  value={targetAgentId}
-                  onValueChange={(value) => setTargetAgentId(value ?? '')}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Escolha um suporte" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeAgents
-                      .filter((agent) => agent.id !== transferTicket?.ownerAgentId)
-                      .map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id}>
-                          {agent.name} · {statusMeta[agent.status].label}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </label>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setTransferTicket(null)}>
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={!targetAgentId || pending}>
-                Transferir
-                <ArrowUpRight />
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }

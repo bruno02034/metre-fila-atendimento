@@ -9,10 +9,8 @@ Situações tratadas no desenho:
 - suporte ocupado, pausado, ausente, desativado ou temporariamente indisponível;
 - pessoas indisponíveis preservam sua posição relativa, mas são ignoradas na escolha do próximo elegível;
 - pular a vez move o suporte para o fim e registra o motivo;
-- pegar atendimento move o suporte para o fim, muda seu status para ocupado e abre um atendimento;
-- encerrar atendimento registra duração e torna o suporte disponível novamente;
-- transferir fecha a responsabilidade do suporte de origem e abre a do destino sem contar um novo atendimento recebido;
-- ticket informado é único entre atendimentos abertos, evitando duas pessoas pegarem o mesmo ticket;
+- pegar atendimento move o suporte para o fim e registra quem assumiu, sem pedir ticket ou cliente;
+- a disponibilidade continua sendo controlada manualmente pelo status da equipe;
 - toda mutação usa controle de versão da fila; uma gravação concorrente perde a disputa e o cliente atualiza os dados antes de tentar novamente.
 
 ## Regras da fila
@@ -34,19 +32,19 @@ Tabelas principais:
 
 - `support_agents`: cadastro, status, ativação e posição atual;
 - `queue_state`: versão da rotação e horário da última alteração;
-- `tickets`: atendimentos abertos e encerrados, origem manual ou futura integração;
+- `tickets`: estrutura preservada para compatibilidade e possível integração futura, fora do fluxo atual;
 - `events`: histórico imutável de ações;
-- `settings`: configurações operacionais futuras sem acoplar o domínio ao TiFlux.
+- configurações futuras podem ser adicionadas sem acoplar o domínio ao TiFlux.
 
-Índices atendem as consultas do painel (ordem ativa, eventos do dia, tickets abertos) e um índice único parcial protege o identificador de ticket enquanto estiver aberto.
+Índices atendem as consultas do painel, especialmente ordem ativa e eventos do dia.
 
 ## Integração futura com TiFlux
 
-O núcleo recebe comandos normalizados (`claim`, `transfer`, `close`, `skip`, `status-change`) e registra a origem (`manual` ou `tiflux`). Uma integração futura deve apenas adaptar eventos reais do TiFlux para esses comandos; nenhum endpoint externo foi presumido.
+O fluxo atual usa comandos normalizados de rotação e disponibilidade (`claim`, `skip` e `status`). Uma integração futura pode adaptar eventos reais do TiFlux para esses comandos; nenhum endpoint externo foi presumido.
 
 ## Telas
 
-- **Operação:** próximo da fila, ações rápidas, fila completa, status da equipe, indicadores, ranking e histórico recente.
+- **Operação:** próximo da fila, avanço direto, fila completa, status da equipe, indicadores, ranking e histórico recente.
 - **Administração:** adicionar/remover logicamente, ativar/desativar, reordenar, resetar, consultar histórico e estatísticas.
 
 ## Atualização
