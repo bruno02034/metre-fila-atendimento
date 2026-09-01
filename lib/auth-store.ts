@@ -23,6 +23,7 @@ const LOGIN_LOCK_MINUTES = 15;
 type RuntimeEnv = {
   DB: D1Database;
   ADMIN_QUEUE_PASSWORD?: string;
+  SUPPORT_DEFAULT_PASSWORD?: string;
 };
 
 type UserRow = {
@@ -145,13 +146,24 @@ async function derivePassword(password: string, salt: Uint8Array<ArrayBuffer>) {
   return new Uint8Array(bits);
 }
 
-export async function hashPassword(password: string) {
-  if (password.length < 8 || password.length > 128) {
-    throw new AuthError('A senha deve ter entre 8 e 128 caracteres.', 400);
+async function hashPasswordWithMinimum(password: string, minimumLength: number) {
+  if (password.length < minimumLength || password.length > 128) {
+    throw new AuthError(
+      `A senha deve ter entre ${minimumLength} e 128 caracteres.`,
+      400,
+    );
   }
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await derivePassword(password, salt);
   return `pbkdf2_sha256$${PASSWORD_ITERATIONS}$${bytesToBase64(salt)}$${bytesToBase64(hash)}`;
+}
+
+export function hashPassword(password: string) {
+  return hashPasswordWithMinimum(password, 8);
+}
+
+export function hashSupportPassword(password: string) {
+  return hashPasswordWithMinimum(password, 6);
 }
 
 async function secureBytesEqual(left: Uint8Array, right: Uint8Array) {
@@ -285,6 +297,44 @@ export async function ensureAuthDatabase() {
             .bind(
               crypto.randomUUID(),
               JSON.stringify({ login: 'admin', role: 'admin' }),
+              timestamp,
+            ),
+        ]);
+      }
+
+      const supportPasswordRolloutId = 'system-support-password-rollout-v1';
+      const supportPasswordRollout = await db
+        .prepare('SELECT id FROM user_audit_log WHERE id = ?')
+        .bind(supportPasswordRolloutId)
+        .first<{ id: string }>();
+      const supportDefaultPassword = (env as unknown as RuntimeEnv)
+        .SUPPORT_DEFAULT_PASSWORD;
+      if (!supportPasswordRollout && supportDefaultPassword) {
+        const supportPasswordHash = await hashSupportPassword(
+          supportDefaultPassword,
+        );
+        await db.batch([
+          db
+            .prepare(
+              `UPDATE app_users
+               SET password_hash = ?, failed_login_attempts = 0,
+                   locked_until = NULL, updated_at = ?
+               WHERE role = 'support'`,
+            )
+            .bind(supportPasswordHash, timestamp),
+          db.prepare(
+            `DELETE FROM auth_sessions
+             WHERE user_id IN (SELECT id FROM app_users WHERE role = 'support')`,
+          ),
+          db
+            .prepare(
+              `INSERT OR IGNORE INTO user_audit_log
+               (id, user_id, actor_user_id, action, details, occurred_at)
+               VALUES (?, NULL, 'admin', 'support_passwords_initialized', ?, ?)`,
+            )
+            .bind(
+              supportPasswordRolloutId,
+              JSON.stringify({ scope: 'all_support_users' }),
               timestamp,
             ),
         ]);

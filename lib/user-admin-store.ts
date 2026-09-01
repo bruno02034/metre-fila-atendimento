@@ -1,5 +1,9 @@
 import { env } from 'cloudflare:workers';
-import { ensureAuthDatabase, hashPassword } from '@/lib/auth-store';
+import {
+  ensureAuthDatabase,
+  hashPassword,
+  hashSupportPassword,
+} from '@/lib/auth-store';
 import {
   assertAdminPassword,
   businessDate,
@@ -13,7 +17,6 @@ type RuntimeEnv = { DB: D1Database };
 
 export type UserAdminInput = {
   id?: string;
-  version: number;
   adminPassword: string;
   name: string;
   login: string;
@@ -57,23 +60,31 @@ function slug(value: string) {
     .replace(/^-|-$/g, '');
 }
 
-async function acquireQueueLock(version: number) {
+async function acquireQueueLock() {
   const token = crypto.randomUUID();
   const result = await database()
     .prepare(
       `UPDATE queue_state
        SET version = version + 1, lock_token = ?, updated_at = ?
-       WHERE id = 1 AND version = ? AND lock_token IS NULL`,
+       WHERE id = 1 AND lock_token IS NULL`,
     )
-    .bind(token, new Date().toISOString(), version)
+    .bind(token, new Date().toISOString())
     .run();
   if (Number(result.meta.changes) !== 1) {
     throw new QueueError(
-      'A fila mudou enquanto você agia. Os dados já foram atualizados.',
+      'Outra alteração está sendo concluída. Tente novamente em instantes.',
       409,
     );
   }
-  return token;
+  const state = await database()
+    .prepare('SELECT version FROM queue_state WHERE id = 1 AND lock_token = ?')
+    .bind(token)
+    .first<{ version: number }>();
+  if (!state) {
+    await releaseQueueLock(token);
+    throw new QueueError('Não foi possível reservar a alteração da fila.', 409);
+  }
+  return { token, version: Number(state.version) };
 }
 
 async function releaseQueueLock(token: string) {
@@ -86,21 +97,8 @@ async function releaseQueueLock(token: string) {
 export async function saveManagedUser(input: UserAdminInput, actor: SessionUser) {
   await ensureAuthDatabase();
   await assertAdminPassword(input.adminPassword);
-  if (!Number.isInteger(input.version) || input.version < 0) {
-    throw new QueueError('Versão da fila inválida. Atualize a página.');
-  }
 
   const db = database();
-  const state = await db
-    .prepare('SELECT version FROM queue_state WHERE id = 1')
-    .first<{ version: number }>();
-  if (Number(state?.version) !== input.version) {
-    throw new QueueError(
-      'A fila mudou enquanto você agia. Os dados já foram atualizados.',
-      409,
-    );
-  }
-
   const existing = input.id
     ? await db
         .prepare(
@@ -153,7 +151,11 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
 
   const password = typeof input.password === 'string' ? input.password : '';
   if (!existing && !password) throw new QueueError('Defina uma senha para o novo acesso.');
-  const passwordHash = password ? await hashPassword(password) : null;
+  const passwordHash = password
+    ? official
+      ? await hashSupportPassword(password)
+      : await hashPassword(password)
+    : null;
   const timestamp = new Date().toISOString();
   const userId = existing?.id ?? `admin-${slug(requestedName)}-${crypto.randomUUID().slice(0, 6)}`;
   const name = official?.name ?? requestedName;
@@ -162,7 +164,7 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
       ? 'user_updated_password_reset'
       : 'user_updated'
     : 'user_created';
-  const token = await acquireQueueLock(input.version);
+  const lock = await acquireQueueLock();
 
   try {
     const statements: D1PreparedStatement[] = [];
@@ -265,7 +267,7 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
             login,
             authorizedBy: 'administrator',
             authorizationMethod: 'password',
-            versionAfter: input.version + 1,
+            versionAfter: lock.version,
           }),
           businessDate(new Date(timestamp)),
           timestamp,
@@ -278,7 +280,7 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
     }
     await db.batch(statements);
   } finally {
-    await releaseQueueLock(token);
+    await releaseQueueLock(lock.token);
   }
 
   await reconcileQueueCycle();
