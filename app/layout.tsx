@@ -13,6 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    'https://pulso-fila-atendimento.isadoracarolinefreit.chatgpt.site',
+  ),
   title: 'Pulso — Fila de atendimento',
   description:
     'Painel interno para distribuir atendimentos da equipe de suporte com justiça e clareza.',
@@ -22,12 +25,23 @@ export const metadata: Metadata = {
       'Distribuição justa, status da equipe e histórico em um painel operacional compartilhado.',
     type: 'website',
     locale: 'pt_BR',
+    images: [
+      {
+        url: 'https://pulso-fila-atendimento.isadoracarolinefreit.chatgpt.site/og.png',
+        width: 1731,
+        height: 909,
+        alt: 'Pulso — Fila de atendimento',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Pulso — Fila de atendimento',
     description:
       'Distribuição justa, status da equipe e histórico em um painel operacional compartilhado.',
+    images: [
+      'https://pulso-fila-atendimento.isadoracarolinefreit.chatgpt.site/og.png',
+    ],
   },
 };
 
