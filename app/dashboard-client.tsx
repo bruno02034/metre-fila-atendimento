@@ -6,6 +6,7 @@ import {
   Headphones,
   History,
   LayoutDashboard,
+  LogOut,
   PauseCircle,
   RefreshCw,
   RotateCcw,
@@ -17,6 +18,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { TurnAlertCenter } from '@/components/turn-alert-center';
 import {
   Dialog,
   DialogContent,
@@ -39,7 +41,7 @@ import type {
   AgentStatus,
   QueueCommandInput,
   QueueEvent,
-  QueueSnapshot,
+  QueueView,
 } from '@/lib/types';
 
 const statusMeta: Record<AgentStatus, { label: string; className: string }> = {
@@ -56,14 +58,13 @@ const actionLabels: Record<string, string> = {
   claim: 'Pegou atendimento',
   undo_claim: 'Devolveu o atendimento',
   skip: 'Pulou a vez',
+  automatic_skip: 'Foi pulado automaticamente',
   status_change: 'Alterou o status',
   close: 'Encerrou atendimento',
   transfer: 'Transferiu atendimento',
-  agent_added: 'Adicionou suporte',
-  agent_activated: 'Ativou suporte',
-  agent_deactivated: 'Desativou suporte',
-  queue_reordered: 'Reordenou a fila',
-  queue_reset: 'Resetou a fila',
+  user_created: 'Criou um acesso',
+  user_updated: 'Atualizou um acesso',
+  user_updated_password_reset: 'Redefiniu uma senha',
 };
 
 function formatTime(value: string) {
@@ -77,6 +78,19 @@ function formatTime(value: string) {
 function eventDescription(event: QueueEvent) {
   if (event.action === 'undo_claim') {
     return 'Voltou para sua vez na fila';
+  }
+  if (event.action === 'automatic_skip') {
+    const reasonLabels: Record<string, string> = {
+      busy: 'estava ocupado',
+      paused: 'estava pausado',
+      away: 'estava ausente',
+      offline: 'estava offline',
+      inactive: 'estava inativo',
+    };
+    const reason = reasonLabels[String(event.details?.reason)] ?? 'estava indisponível';
+    return event.secondaryAgentName
+      ? `${reason}; atendimento direcionado para ${event.secondaryAgentName}`
+      : reason;
   }
   const auditLabel =
     event.details?.authorizedBy === 'administrator'
@@ -99,18 +113,22 @@ function eventDescription(event: QueueEvent) {
 export function DashboardClient({
   initialSnapshot,
 }: {
-  initialSnapshot: QueueSnapshot;
+  initialSnapshot: QueueView;
 }) {
   const { snapshot, pending, refresh, mutate } = useQueue(initialSnapshot);
   const [undoOpen, setUndoOpen] = useState(false);
+  const viewer = snapshot.viewer;
+  const viewerAgent = snapshot.agents.find((agent) => agent.id === viewer.agentId);
+  const canOperateNext =
+    viewer.role === 'admin' || snapshot.nextAgent?.id === viewer.agentId;
 
-  const activeAgents = snapshot.agents.filter((agent) => agent.isActive);
+  const cycleAgents = snapshot.agents;
   const ranking = useMemo(
     () =>
-      [...activeAgents].sort(
+      [...cycleAgents].sort(
         (a, b) => b.todayCount - a.todayCount || a.queuePosition - b.queuePosition,
       ),
-    [activeAgents],
+    [cycleAgents],
   );
 
   async function run(input: QueueCommandInput, success: string) {
@@ -128,6 +146,7 @@ export function DashboardClient({
   }
 
   async function changeStatus(agent: Agent, status: AgentStatus) {
+    if (viewer.role !== 'admin' && agent.id !== viewer.agentId) return;
     if (agent.status === status) return;
     try {
       await run(
@@ -137,6 +156,11 @@ export function DashboardClient({
     } catch {
       // Feedback is shown by the shared toast.
     }
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    window.location.assign('/login');
   }
 
   return (
@@ -156,6 +180,10 @@ export function DashboardClient({
             </div>
           </a>
           <nav className="flex items-center gap-1" aria-label="Navegação principal">
+            <span className="hidden px-3 text-xs text-white/65 md:inline">
+              Olá, <strong className="font-medium text-white">{viewer.name}</strong>
+              {viewerAgent ? ` · ${viewerAgent.queuePosition + 1}ª posição fixa` : ''}
+            </span>
             <a
               href="/"
               className="hidden items-center gap-2 rounded-lg bg-white/10 px-3 py-2 text-xs font-medium sm:flex"
@@ -163,13 +191,15 @@ export function DashboardClient({
               <LayoutDashboard className="size-3.5" />
               Operação
             </a>
-            <a
-              href="/admin"
-              className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white"
-            >
-              <Settings2 className="size-3.5" />
-              Administração
-            </a>
+            {viewer.role === 'admin' ? (
+              <a
+                href="/admin"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-white/65 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <Settings2 className="size-3.5" />
+                Administração
+              </a>
+            ) : null}
             <Button
               variant="ghost"
               size="icon"
@@ -180,11 +210,21 @@ export function DashboardClient({
             >
               <RefreshCw className={pending ? 'animate-spin' : ''} />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-white/65 hover:bg-white/10 hover:text-white"
+              aria-label="Sair"
+              onClick={() => void logout()}
+            >
+              <LogOut />
+            </Button>
           </nav>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+        <TurnAlertCenter view={snapshot} onRefresh={refresh} />
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(360px,.75fr)]">
           <article className="relative overflow-hidden rounded-3xl bg-[var(--navy)] p-6 text-white shadow-[0_20px_55px_rgb(12_27_48/14%)] sm:p-8">
             <div className="pointer-events-none absolute -right-20 -top-24 size-72 rounded-full border-[48px] border-white/[0.025]" />
@@ -212,8 +252,8 @@ export function DashboardClient({
                 </h1>
                 <p className="mt-4 max-w-xl text-sm leading-6 text-white/55">
                   {snapshot.nextAgent
-                    ? `É a vez de ${snapshot.nextAgent.name} pegar o próximo atendimento. Ao clicar no botão, essa pessoa vai direto para o fim da fila.`
-                    : 'Marque ao menos uma pessoa como disponível para retomar a distribuição.'}
+                    ? `É a vez de ${snapshot.nextAgent.name}. Ao registrar o atendimento, o ciclo avança sem alterar a ordem oficial.`
+                    : 'Aguardando um integrante disponível e online para retomar o ciclo.'}
                 </p>
               </div>
 
@@ -222,7 +262,7 @@ export function DashboardClient({
                   <Button
                     size="lg"
                     className="h-12 rounded-xl bg-[var(--brand)] px-5 font-semibold text-white shadow-[0_8px_24px_rgb(194_70_26/24%)] hover:bg-[var(--brand-strong)]"
-                    disabled={!snapshot.nextAgent || pending}
+                    disabled={!snapshot.nextAgent || !canOperateNext || pending}
                     onClick={() => {
                       if (!snapshot.nextAgent) return;
                       void run(
@@ -238,7 +278,7 @@ export function DashboardClient({
                     size="lg"
                     variant="outline"
                     className="h-12 rounded-xl border-white/15 bg-white/5 px-5 text-white hover:bg-white/10 hover:text-white"
-                    disabled={!snapshot.nextAgent || pending}
+                    disabled={!snapshot.nextAgent || !canOperateNext || pending}
                     onClick={() => {
                       if (!snapshot.nextAgent) return;
                       void run(
@@ -288,17 +328,20 @@ export function DashboardClient({
                   </p>
                 </div>
                 <Badge variant="outline" className="border-[var(--line)] text-muted-foreground">
-                  {activeAgents.length} pessoas
+                  {cycleAgents.length} pessoas
                 </Badge>
               </div>
               <ol className="max-h-[404px] overflow-y-auto px-3 py-3">
-                {activeAgents.map((person, index) => {
+                {cycleAgents.map((person, index) => {
                   const isNext = snapshot.nextAgent?.id === person.id;
+                  const isOwnNext = isNext && viewer.agentId === person.id;
                   return (
                     <li
                       key={person.id}
                       className={`grid grid-cols-[36px_1fr_auto] items-center gap-3 rounded-2xl px-3 py-2.5 ${
-                        isNext
+                        isOwnNext
+                          ? 'bg-[var(--brand)]/15 ring-2 ring-[var(--brand)]'
+                          : isNext
                           ? 'bg-[var(--brand-soft)] ring-1 ring-[var(--brand-line)]'
                           : ''
                       }`}
@@ -317,7 +360,7 @@ export function DashboardClient({
                           {person.name}
                         </span>
                         <span className="text-[10px] text-muted-foreground">
-                          {person.todayCount} hoje
+                          {person.todayCount} hoje · {person.online ? 'online' : 'offline'}
                         </span>
                       </span>
                       <Select
@@ -325,7 +368,11 @@ export function DashboardClient({
                         onValueChange={(value) =>
                           void changeStatus(person, value as AgentStatus)
                         }
-                        disabled={pending}
+                        disabled={
+                          pending ||
+                          !person.isActive ||
+                          (viewer.role !== 'admin' && person.id !== viewer.agentId)
+                        }
                       >
                         <SelectTrigger
                           size="sm"
@@ -357,11 +404,11 @@ export function DashboardClient({
         <section className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             { label: 'Atendimentos hoje', value: snapshot.stats.todayTotal, icon: Headphones },
-            { label: 'Pessoas na fila', value: activeAgents.length, icon: Users },
+            { label: 'Ordem oficial', value: cycleAgents.length, icon: Users },
             { label: 'Disponíveis agora', value: snapshot.stats.available, icon: Users },
             {
               label: 'Indisponíveis agora',
-              value: activeAgents.length - snapshot.stats.available,
+              value: cycleAgents.length - snapshot.stats.available,
               icon: PauseCircle,
             },
           ].map(({ label, value, icon: Icon }) => (
@@ -447,7 +494,7 @@ export function DashboardClient({
         </section>
 
         <footer className="flex flex-col justify-between gap-2 py-6 text-[11px] text-muted-foreground sm:flex-row">
-          <p>Atualização automática a cada 5 segundos · Horário de Brasília</p>
+          <p>Atualização em tempo real · Horário de Brasília</p>
           <p>Última alteração às {formatTime(snapshot.updatedAt)}</p>
         </footer>
       </div>

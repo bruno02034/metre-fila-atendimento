@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { type SyntheticEvent, useState } from 'react';
 import { LockKeyhole } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,17 +29,14 @@ export function AdminAuthorizationDialog({
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    setPassword('');
-    setError('');
-  }, [open]);
-
-  async function submit(event: FormEvent) {
+  async function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!password || pending) return;
     setError('');
     try {
       await onConfirm(password);
+      setPassword('');
+      setError('');
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -50,7 +47,16 @@ export function AdminAuthorizationDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          setPassword('');
+          setError('');
+        }
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent>
         <form onSubmit={submit}>
           <DialogHeader>
@@ -74,7 +80,6 @@ export function AdminAuthorizationDialog({
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="off"
-              autoFocus
               aria-invalid={Boolean(error)}
               aria-describedby={error ? 'admin-password-error' : undefined}
               placeholder="Digite a senha"

@@ -1,74 +1,114 @@
-# Painel de Fila TiFlux — decisões de produto e arquitetura
+# Metre — regras de fila, autenticação e alertas
 
-## Objetivo e problemas considerados
+## Regra prioritária: ciclo oficial imutável
 
-O painel é uma superfície operacional compartilhada para uma equipe de suporte. A fila não pode depender do navegador de uma pessoa, nem avançar duas vezes quando dois operadores agirem quase simultaneamente.
+A ordem é fixa e tem prioridade sobre regras anteriores:
 
-Situações tratadas no desenho:
+1. HENRIQUE
+2. ARTHUR
+3. VICTOR
+4. PATRICK
+5. PABLO
+6. BRUNO
+7. LUCAS
+8. AMARAL
+9. ANTONY
+10. JOSÉ CARLOS
 
-- suporte ocupado, pausado, ausente, desativado ou temporariamente indisponível;
-- pessoas indisponíveis preservam sua posição relativa, mas são ignoradas na escolha do próximo elegível;
-- pular a vez move o suporte para o fim e registra o motivo;
-- pegar atendimento move o suporte para o fim e registra quem assumiu, sem pedir ticket ou cliente;
-- a disponibilidade continua sendo controlada manualmente pelo status da equipe;
-- toda mutação usa controle de versão da fila; uma gravação concorrente perde a disputa e o cliente atualiza os dados antes de tentar novamente.
+O banco continua armazenando uma posição para consulta, mas ela representa a posição
+oficial e nunca é movimentada por um atendimento. O backend reaplica essas dez
+posições durante a inicialização e considera somente esses integrantes no ciclo.
+Não existem comandos de adicionar suporte à fila, reordenar, trocar prioridade,
+colocar alguém no início/fim ou resetar para outra ordem, nem para administradores.
 
-## Regras da fila
+`fixed_queue_state.cursor_position` é o ponteiro do ciclo. Ao registrar um
+atendimento ou pular uma vez, apenas o ponteiro avança. Se chegar ao fim, volta à
+posição zero. Toda mutação usa a versão otimista de `queue_state`; uma requisição
+concorrente perde a disputa com HTTP 409 e precisa ler o estado atualizado.
 
-1. A ordem inicial é HENRIQUE, ARTHUR, VITOR, PABLO, BRUNO, LUCAS e AMARAL.
-2. O próximo é o primeiro suporte ativo e com status `available` na ordem persistida.
-3. Estados `busy`, `paused` e `away` não removem a pessoa da fila; apenas a tornam inelegível.
-4. Ao pegar um atendimento, a pessoa selecionada vai para o fim da fila.
-5. Ao pular, a pessoa vai para o fim sem aumentar sua contagem de atendimentos.
-6. Ao voltar, muda para disponível e permanece em sua posição relativa.
-7. Se ninguém estiver elegível, o painel mostra fila sem próximo em vez de alterar a ordem.
-8. Resetar restaura a ordem inicial dos integrantes ativos e zera apenas a rotação, nunca apaga o histórico.
+## Elegibilidade e pulos automáticos
+
+Um integrante recebe a vez somente quando:
+
+- seu acesso e registro de suporte estão ativos;
+- seu status é `available`;
+- existe presença recente, renovada pelo navegador autenticado a cada 20 segundos.
+
+A presença expira após 60 segundos. `busy`, `paused`, `away`, inatividade e offline
+tornam a pessoa inelegível apenas naquela passagem do ciclo. A posição oficial não
+muda. O servidor percorre a ordem a partir do ponteiro até encontrar o próximo
+elegível e registra um evento `automatic_skip` para cada pessoa ignorada, incluindo
+motivo e destinatário efetivo. Se ninguém estiver elegível, o próximo fica vazio e
+o ponteiro é preservado até alguém voltar.
+
+O comando **Pular a vez** é uma decisão operacional manual, não exige senha e também
+apenas avança o ponteiro. Alterar o próprio status não exige senha. Não existe pulo
+automático por falta de resposta ao alerta enquanto o usuário continuar online e
+disponível; nesse caso a equipe usa **Pular a vez** para manter a decisão auditável.
 
 ## Devolver uma retirada por engano
 
-A devolução é um desfazer seguro da retirada mais recente, não uma ação genérica de colocar alguém no início da fila.
+**Devolver para minha vez** desfaz somente a última retirada ainda segura:
 
-1. Ao pegar um atendimento, o evento `claim` registra a ordem completa anterior e a versão da fila produzida pela retirada.
-2. A opção **Devolver para minha vez** fica disponível por 5 minutos somente para a retirada global mais recente.
-3. A devolução só é aceita se a versão atual ainda for exatamente a versão produzida por aquela retirada. Portanto, qualquer nova retirada, pulo, mudança de status, reordenação, ativação, desativação ou reset invalida a opção.
-4. Ao confirmar, todas as posições são restauradas a partir da ordem registrada no evento original, garantindo que nenhuma outra pessoa ganhe ou perca posição.
-5. O evento original permanece no histórico e um novo evento `undo_claim` registra quem devolveu, quando devolveu e qual retirada foi desfeita.
-6. A retirada devolvida deixa de contar nos indicadores e no ranking do dia, sem apagar nenhum registro de auditoria.
-7. Depois do prazo ou de qualquer alteração posterior, não existe desfazer automático. Uma eventual correção tardia exige tratamento administrativo separado, para não reescrever silenciosamente uma fila que outras pessoas já utilizaram.
+1. `claim` registra a posição anterior do ponteiro, sequência e versão resultante.
+2. A opção existe por 5 minutos e somente enquanto nenhuma outra mutação alterar a
+   versão da fila.
+3. A devolução restaura o ponteiro para aquele integrante sem mudar posição alguma.
+4. `undo_claim` permanece no histórico e a retirada devolvida deixa de contar nos
+   indicadores, sem apagar o evento original.
 
-No cenário de múltiplos atendimentos, a segunda retirada incrementa a versão da fila e invalida imediatamente a devolução da primeira. Isso prioriza a justiça da sequência já observada pela equipe.
+Uma retirada, pulo, status, mudança administrativa ou transição automática posterior
+invalida a devolução antiga. Assim, um desfazer tardio não prejudica atendimentos que
+já avançaram o ciclo.
 
-## Persistência e concorrência
+## Contas, sessões e administração
 
-O banco é SQLite/D1. As operações passam por uma pequena camada de domínio no servidor. A tabela singleton `queue_state` mantém a versão corrente. Cada comando escreve com `WHERE version = ?`; se nenhuma linha for alterada, ocorreu concorrência e a operação retorna conflito HTTP 409.
+Os dez integrantes oficiais recebem contas individuais ligadas aos respectivos
+registros. Não há senha inicial compartilhada: o administrador libera cada acesso
+definindo uma senha individual. O login inicial segue o nome normalizado; VICTOR usa
+`victor` e JOSÉ CARLOS usa `jose.carlos`.
 
-Tabelas principais:
+O administrador inicial usa o login `admin` e a senha já configurada no segredo
+`ADMIN_QUEUE_PASSWORD`. Senhas persistidas usam PBKDF2-SHA256, 210 mil iterações e
+salt aleatório. Sessões usam token aleatório em cookie `HttpOnly`, `Secure` e
+`SameSite=Lax`; o banco guarda apenas o hash do token por 8 horas. Após cinco falhas,
+o acesso fica bloqueado por 15 minutos.
 
-- `support_agents`: cadastro, status, ativação e posição atual;
-- `queue_state`: versão da rotação e horário da última alteração;
-- `tickets`: estrutura preservada para compatibilidade e possível integração futura, fora do fluxo atual;
-- `events`: histórico imutável de ações;
-- configurações futuras podem ser adicionadas sem acoplar o domínio ao TiFlux.
+Suporte pode consultar a fila, alterar apenas o próprio status, registrar apenas a
+própria vez, pular a própria vez e devolver a própria retirada recente. Administrador
+pode gerenciar logins, senhas e ativação, além de consultar histórico e estatísticas.
+Alterações administrativas exigem sessão de administrador e confirmação da senha
+administrativa no servidor. Novos acessos podem ser administrativos; a equipe de
+suporte não pode ganhar integrantes fora da sequência oficial.
 
-Índices atendem as consultas do painel, especialmente ordem ativa e eventos do dia.
+Criação, edição, redefinição de senha, login e logout são registrados em
+`user_audit_log`; ações que interessam ao painel também entram em `events`.
 
-## Autorização administrativa
+## Tempo real e alerta de vez
 
-Os comandos `claim` (**Peguei atendimento**), `undo-claim` (**Devolver para minha vez**), `skip` (**Pular a vez**) e `status` (**Alterar status**) pertencem ao fluxo normal e não pedem senha. Os comandos administrativos — adicionar, ativar/desativar, reordenar, transferir, encerrar manualmente e resetar — exigem autorização administrativa no servidor.
+Mudanças reais do próximo efetivo incrementam a sequência persistida. Clientes
+recebem mudanças por Server-Sent Events e mantêm consulta periódica como contingência.
+O alerta só pertence ao usuário cujo `agent_id` coincide com o próximo efetivo.
 
-A senha é recebida por um campo do tipo `password`, enviada apenas na requisição da ação e comparada no servidor com o segredo `ADMIN_QUEUE_PASSWORD`. O valor não é persistido, não integra o código do navegador e nunca é incluído nos eventos. A comparação usa resumos SHA-256 e o backend rejeita a ação antes de adquirir o bloqueio da fila quando a autorização estiver ausente ou incorreta.
+O navegador exige gesto do usuário para liberar áudio e notificações, portanto existe
+**Ativar alertas**. O som é uma sequência curta de três notas, dura cerca de 1,4
+segundo e nunca entra em repetição. **Parar som** interrompe imediatamente qualquer
+nota ativa; **Entendi** para o som e registra o reconhecimento da sequência atual.
+Uma nova sequência futura pode alertar novamente.
 
-Cada comando protegido acrescenta `authorizedBy: administrator` e `authorizationMethod: password` aos detalhes do evento correspondente, mantendo data, horário, ação e suporte afetado no histórico auditável.
+`localStorage` guarda apenas a preferência do dispositivo e a chave já reproduzida.
+`BroadcastChannel` reduz duplicação entre abas do mesmo navegador. O estado
+autoritativo da vez e dos reconhecimentos fica no D1. Som e Notification API exigem
+a página aberta; aviso com navegador totalmente fechado exigiria Web Push, fora do
+escopo desta versão.
 
-## Integração futura com TiFlux
+## Persistência
 
-O fluxo atual usa comandos normalizados de rotação e disponibilidade (`claim`, `undo-claim`, `skip` e `status`). Uma integração futura pode adaptar eventos reais do TiFlux para esses comandos; nenhum endpoint externo foi presumido.
-
-## Telas
-
-- **Operação:** próximo da fila, avanço direto, devolução segura da retirada mais recente, fila completa, status da equipe, indicadores, ranking e histórico recente.
-- **Administração:** adicionar/remover logicamente, ativar/desativar, reordenar, resetar, consultar histórico e estatísticas.
-
-## Atualização
-
-O cliente consulta o snapshot compartilhado periodicamente e imediatamente após cada ação. Essa estratégia é compatível com D1 hoje e pode ser substituída por eventos em tempo real sem mudar as regras do domínio.
+- `support_agents`: integrantes oficiais, status e posições fixas;
+- `queue_state`: versão concorrente global;
+- `fixed_queue_state`: ponteiro, sequência de alerta e próximo efetivo;
+- `queue_presence`: última presença por suporte;
+- `events`: auditoria operacional imutável;
+- `app_users`, `auth_sessions`, `user_presence`, `turn_acknowledgements` e
+  `user_audit_log`: autenticação, presença e auditoria de acesso;
+- `tickets`: estrutura preservada para integração futura, fora do fluxo atual.
