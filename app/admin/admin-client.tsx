@@ -344,7 +344,6 @@ export function AdminClient({
                 <TableHead className="pl-5">Horário</TableHead>
                 <TableHead>Suporte</TableHead>
                 <TableHead>Ação</TableHead>
-                <TableHead>Ticket</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -356,14 +355,11 @@ export function AdminClient({
                     </TableCell>
                     <TableCell className="font-medium">{event.agentName || 'Sistema'}</TableCell>
                     <TableCell>{actionLabels[event.action] || event.action}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {event.externalId || '—'}
-                    </TableCell>
                   </TableRow>
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={4} className="h-28 text-center text-muted-foreground">
+                  <TableCell colSpan={3} className="h-28 text-center text-muted-foreground">
                     Nenhuma atividade registrada hoje.
                   </TableCell>
                 </TableRow>
@@ -378,8 +374,8 @@ export function AdminClient({
           <DialogHeader>
             <DialogTitle>Resetar a ordem da fila?</DialogTitle>
             <DialogDescription>
-              A equipe ativa volta à ordem inicial de cadastro. Status, atendimentos
-              abertos, contagens e histórico não serão apagados.
+              A equipe ativa volta à ordem inicial de cadastro. Status, contagens e
+              histórico não serão apagados.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
