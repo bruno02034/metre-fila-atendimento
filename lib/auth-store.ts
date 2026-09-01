@@ -15,7 +15,8 @@ import type {
 
 const SESSION_COOKIE = 'metre_session';
 const SESSION_DURATION_SECONDS = 8 * 60 * 60;
-const PASSWORD_ITERATIONS = 210_000;
+// Cloudflare Workers WebCrypto accepts at most 100,000 PBKDF2 iterations.
+const PASSWORD_ITERATIONS = 100_000;
 const MAX_LOGIN_FAILURES = 5;
 const LOGIN_LOCK_MINUTES = 15;
 
