@@ -29,6 +29,7 @@ const VALID_STATUSES = new Set<AgentStatus>([
 ]);
 const UNDO_WINDOW_MS = 5 * 60 * 1000;
 const ONLINE_WINDOW_MS = 60 * 1000;
+const QUEUE_LOCK_TIMEOUT_MS = 10_000;
 
 type RuntimeEnv = {
   DB: D1Database;
@@ -165,6 +166,13 @@ export async function ensureDatabase() {
           'INSERT OR IGNORE INTO queue_state (id, version, lock_token, updated_at) VALUES (1, 0, NULL, ?)',
         )
         .bind(timestamp)
+        .run();
+      await db
+        .prepare(
+          `UPDATE queue_state SET lock_token = NULL
+           WHERE id = 1 AND lock_token IS NOT NULL AND updated_at < ?`,
+        )
+        .bind(new Date(Date.now() - QUEUE_LOCK_TIMEOUT_MS).toISOString())
         .run();
 
       const existingCycle = await db
@@ -324,13 +332,18 @@ export async function assertAdminPassword(adminPassword: unknown) {
 
 async function acquireLock(expectedVersion: number) {
   const token = crypto.randomUUID();
+  const timestamp = nowIso();
+  const staleBefore = new Date(
+    Date.now() - QUEUE_LOCK_TIMEOUT_MS,
+  ).toISOString();
   const result = await database()
     .prepare(
       `UPDATE queue_state
        SET version = version + 1, lock_token = ?, updated_at = ?
-       WHERE id = 1 AND version = ? AND lock_token IS NULL`,
+       WHERE id = 1 AND version = ?
+         AND (lock_token IS NULL OR updated_at < ?)`,
     )
-    .bind(token, nowIso(), expectedVersion)
+    .bind(token, timestamp, expectedVersion, staleBefore)
     .run();
   if (Number(result.meta.changes) !== 1) {
     throw new QueueError(

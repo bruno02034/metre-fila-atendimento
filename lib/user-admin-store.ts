@@ -14,6 +14,7 @@ import {
 import type { SessionUser, UserRole } from '@/lib/types';
 
 type RuntimeEnv = { DB: D1Database };
+const QUEUE_LOCK_TIMEOUT_MS = 10_000;
 
 export type UserAdminInput = {
   id?: string;
@@ -62,13 +63,17 @@ function slug(value: string) {
 
 async function acquireQueueLock() {
   const token = crypto.randomUUID();
+  const timestamp = new Date().toISOString();
+  const staleBefore = new Date(
+    Date.now() - QUEUE_LOCK_TIMEOUT_MS,
+  ).toISOString();
   const result = await database()
     .prepare(
       `UPDATE queue_state
        SET version = version + 1, lock_token = ?, updated_at = ?
-       WHERE id = 1 AND lock_token IS NULL`,
+       WHERE id = 1 AND (lock_token IS NULL OR updated_at < ?)`,
     )
-    .bind(token, new Date().toISOString())
+    .bind(token, timestamp, staleBefore)
     .run();
   if (Number(result.meta.changes) !== 1) {
     throw new QueueError(
