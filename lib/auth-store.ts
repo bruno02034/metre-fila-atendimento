@@ -1,9 +1,5 @@
 import { env } from 'cloudflare:workers';
-import {
-  ensureDatabase,
-  OFFICIAL_TEAM,
-  reconcileQueueCycle,
-} from '@/lib/queue-store';
+import { ensureDatabase, OFFICIAL_TEAM } from '@/lib/queue-store';
 import type {
   ManagedUser,
   QueueCommand,
@@ -146,7 +142,10 @@ async function derivePassword(password: string, salt: Uint8Array<ArrayBuffer>) {
   return new Uint8Array(bits);
 }
 
-async function hashPasswordWithMinimum(password: string, minimumLength: number) {
+async function hashPasswordWithMinimum(
+  password: string,
+  minimumLength: number,
+) {
   if (password.length < minimumLength || password.length > 128) {
     throw new AuthError(
       `A senha deve ter entre ${minimumLength} e 128 caracteres.`,
@@ -177,7 +176,10 @@ async function secureBytesEqual(left: Uint8Array, right: Uint8Array) {
 
 export async function verifyPassword(password: string, encoded: string) {
   const [algorithm, iterations, saltValue, hashValue] = encoded.split('$');
-  if (algorithm !== 'pbkdf2_sha256' || Number(iterations) !== PASSWORD_ITERATIONS) {
+  if (
+    algorithm !== 'pbkdf2_sha256' ||
+    Number(iterations) !== PASSWORD_ITERATIONS
+  ) {
     return false;
   }
   try {
@@ -230,12 +232,50 @@ export async function ensureAuthDatabase() {
       const db = database();
       await db.batch(authSchemaStatements.map((sql) => db.prepare(sql)));
       const timestamp = nowIso();
+      const officialAgentIds = OFFICIAL_TEAM.map((agent) => agent.id);
+      const officialPlaceholders = officialAgentIds.map(() => '?').join(', ');
+
+      await db.batch(
+        OFFICIAL_TEAM.map((agent) =>
+          db
+            .prepare(
+              `UPDATE app_users
+               SET agent_id = ?, name = ?, role = 'support', is_active = 1,
+                   participates_in_queue = 1, failed_login_attempts = 0,
+                   locked_until = NULL, updated_at = ?
+               WHERE id = (
+                 SELECT legacy.id FROM app_users legacy
+                 WHERE legacy.role = 'support'
+                   AND legacy.login = ? COLLATE NOCASE
+                   AND (
+                     legacy.agent_id IS NULL OR
+                     legacy.agent_id NOT IN (${officialPlaceholders})
+                   )
+                 ORDER BY legacy.created_at
+                 LIMIT 1
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM app_users current WHERE current.agent_id = ?
+               )`,
+            )
+            .bind(
+              agent.id,
+              agent.name,
+              timestamp,
+              loginFromName(agent.name),
+              ...officialAgentIds,
+              agent.id,
+            ),
+        ),
+      );
+
       const agents = await db
         .prepare(
           `SELECT id, name, is_active FROM support_agents
-           WHERE queue_position BETWEEN 0 AND 9
+           WHERE id IN (${officialPlaceholders})
            ORDER BY queue_position`,
         )
+        .bind(...officialAgentIds)
         .all<{ id: string; name: string; is_active: number }>();
       await db.batch(
         agents.results.map((agent) =>
@@ -272,6 +312,35 @@ export async function ensureAuthDatabase() {
             .bind(agent.name, timestamp, agent.id),
         ),
       );
+
+      await db.batch([
+        db
+          .prepare(
+            `UPDATE app_users
+             SET is_active = 0, participates_in_queue = 0, updated_at = ?
+             WHERE (
+               role = 'support' AND (
+                 agent_id IS NULL OR agent_id NOT IN (${officialPlaceholders})
+               )
+             ) OR login = 'zeze' COLLATE NOCASE
+               OR name IN ('ZEZÉ', 'ZEZE', 'Zezé', 'Zeze')`,
+          )
+          .bind(timestamp, ...officialAgentIds),
+        db
+          .prepare(
+            `DELETE FROM auth_sessions
+             WHERE user_id IN (
+               SELECT id FROM app_users
+               WHERE (
+                 role = 'support' AND (
+                   agent_id IS NULL OR agent_id NOT IN (${officialPlaceholders})
+                 )
+               ) OR login = 'zeze' COLLATE NOCASE
+                 OR name IN ('ZEZÉ', 'ZEZE', 'Zezé', 'Zeze')
+             )`,
+          )
+          .bind(...officialAgentIds),
+      ]);
 
       const admin = await db
         .prepare("SELECT id FROM app_users WHERE login = 'admin'")
@@ -338,6 +407,34 @@ export async function ensureAuthDatabase() {
               timestamp,
             ),
         ]);
+      }
+      if (supportDefaultPassword) {
+        const supportWithoutPassword = await db
+          .prepare(
+            `SELECT id FROM app_users
+             WHERE agent_id IN (${officialPlaceholders})
+               AND password_hash IS NULL
+             LIMIT 1`,
+          )
+          .bind(...officialAgentIds)
+          .first<{ id: string }>();
+        if (supportWithoutPassword) {
+          const supportPasswordHash = await hashSupportPassword(
+            supportDefaultPassword,
+          );
+          await db
+            .prepare(
+              `UPDATE app_users SET password_hash = ?, updated_at = ?
+               WHERE agent_id IN (${officialPlaceholders})
+                 AND password_hash IS NULL`,
+            )
+            .bind(
+              supportPasswordHash,
+              timestamp,
+              ...officialAgentIds,
+            )
+            .run();
+        }
       }
       await db.prepare('PRAGMA optimize').run();
     })().catch((error) => {
@@ -408,7 +505,11 @@ export function assertSameOrigin(request: Request) {
   }
 }
 
-export async function loginUser(login: unknown, password: unknown, request: Request) {
+export async function loginUser(
+  login: unknown,
+  password: unknown,
+  request: Request,
+) {
   await ensureAuthDatabase();
   const normalizedLogin = normalizeLogin(login);
   const suppliedPassword = typeof password === 'string' ? password : '';
@@ -428,9 +529,9 @@ export async function loginUser(login: unknown, password: unknown, request: Requ
   const locked = row?.locked_until && Date.parse(row.locked_until) > Date.now();
   const valid = Boolean(
     row?.is_active &&
-      row.password_hash &&
-      !locked &&
-      (await verifyPassword(suppliedPassword, row.password_hash)),
+    row.password_hash &&
+    !locked &&
+    (await verifyPassword(suppliedPassword, row.password_hash)),
   );
 
   if (!valid || !row) {
@@ -446,7 +547,12 @@ export async function loginUser(login: unknown, password: unknown, request: Requ
            SET failed_login_attempts = ?, locked_until = ?, updated_at = ?
            WHERE id = ?`,
         )
-        .bind(failures >= MAX_LOGIN_FAILURES ? 0 : failures, lockUntil, nowIso(), row.id)
+        .bind(
+          failures >= MAX_LOGIN_FAILURES ? 0 : failures,
+          lockUntil,
+          nowIso(),
+          row.id,
+        )
         .run();
     }
     throw new AuthError(
@@ -460,7 +566,9 @@ export async function loginUser(login: unknown, password: unknown, request: Requ
   const token = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
   const tokenHash = await sha256(token);
   const timestamp = nowIso();
-  const expiresAt = new Date(Date.now() + SESSION_DURATION_SECONDS * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + SESSION_DURATION_SECONDS * 1000,
+  ).toISOString();
   const statements = [
     db
       .prepare(
@@ -510,7 +618,6 @@ export async function loginUser(login: unknown, password: unknown, request: Requ
     );
   }
   await db.batch(statements);
-  if (row.agent_id) await reconcileQueueCycle();
 
   return { user: toSessionUser(row), token };
 }
@@ -526,7 +633,9 @@ export async function logoutUser(request: Request) {
     .bind(tokenHash)
     .first<{ user_id: string }>();
   const statements = [
-    database().prepare('DELETE FROM auth_sessions WHERE token_hash = ?').bind(tokenHash),
+    database()
+      .prepare('DELETE FROM auth_sessions WHERE token_hash = ?')
+      .bind(tokenHash),
   ];
   if (session) {
     statements.push(
@@ -565,7 +674,6 @@ export async function recordPresence(user: SessionUser) {
     );
   }
   await db.batch(statements);
-  if (user.agentId) await reconcileQueueCycle();
   return timestamp;
 }
 
@@ -592,8 +700,9 @@ export async function queueViewForUser(
   await ensureAuthDatabase();
   const isOwnTurn = Boolean(
     user.agentId &&
-      snapshot.nextAgent?.id === user.agentId &&
-      snapshot.turn.nextAgentId === user.agentId,
+    snapshot.stats.available > 0 &&
+    snapshot.nextAgent?.id === user.agentId &&
+    snapshot.turn.nextAgentId === user.agentId,
   );
   const acknowledgement = isOwnTurn
     ? await database()
@@ -630,15 +739,13 @@ export function authorizeQueueCommand(
   snapshot: QueueSnapshot,
 ) {
   if (user.role === 'admin') return;
+  if (command.type === 'status') return;
   if (!user.agentId || !user.participatesInQueue) {
     throw new AuthError('Seu usuário não participa da fila.', 403);
   }
   switch (command.type) {
     case 'claim':
     case 'skip':
-      if (command.agentId === user.agentId) return;
-      break;
-    case 'status':
       if (command.agentId === user.agentId) return;
       break;
     case 'undo-claim':
@@ -651,6 +758,8 @@ export function authorizeQueueCommand(
 export async function listManagedUsers(): Promise<ManagedUser[]> {
   await ensureAuthDatabase();
   const onlineAfter = new Date(Date.now() - 60_000).toISOString();
+  const officialAgentIds = OFFICIAL_TEAM.map((agent) => agent.id);
+  const officialPlaceholders = officialAgentIds.map(() => '?').join(', ');
   const rows = await database()
     .prepare(
       `SELECT u.id, u.agent_id, u.name, u.login, u.password_hash, u.role,
@@ -659,9 +768,13 @@ export async function listManagedUsers(): Promise<ManagedUser[]> {
        FROM app_users u
        LEFT JOIN support_agents a ON a.id = u.agent_id
        LEFT JOIN user_presence p ON p.user_id = u.id
+       WHERE (u.role = 'admin' OR u.agent_id IN (${officialPlaceholders}))
+         AND u.login <> 'zeze' COLLATE NOCASE
+         AND u.name NOT IN ('ZEZÉ', 'ZEZE', 'Zezé', 'Zeze')
        ORDER BY CASE WHEN u.role = 'admin' THEN 0 ELSE 1 END,
                 COALESCE(a.queue_position, 999999), u.name`,
     )
+    .bind(...officialAgentIds)
     .all<UserRow>();
   return rows.results.map((row) => ({
     ...toSessionUser(row),

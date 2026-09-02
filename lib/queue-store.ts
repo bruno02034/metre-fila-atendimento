@@ -180,6 +180,21 @@ export async function ensureDatabase() {
             )
             .first<{ id: string }>();
 
+      const officialIds = OFFICIAL_TEAM.map((agent) => agent.id);
+      const placeholders = officialIds.map(() => '?').join(', ');
+      const officialNames = OFFICIAL_TEAM.map((agent) => agent.name);
+      const namePlaceholders = officialNames.map(() => '?').join(', ');
+      await db
+        .prepare(
+          `UPDATE support_agents
+           SET name = 'INATIVO ' || id, is_active = 0, status = 'away',
+               updated_at = ?
+           WHERE id NOT IN (${placeholders})
+             AND name IN (${namePlaceholders})`,
+        )
+        .bind(timestamp, ...officialIds, ...officialNames)
+        .run();
+
       await db.batch(
         OFFICIAL_TEAM.map((agent, position) =>
           db
@@ -188,7 +203,14 @@ export async function ensureDatabase() {
                (id, name, status, is_active, queue_position, initial_position, created_at, updated_at)
                VALUES (?, ?, 'available', 1, ?, ?, ?, ?)`,
             )
-            .bind(agent.id, agent.name, position, position, timestamp, timestamp),
+            .bind(
+              agent.id,
+              agent.name,
+              position,
+              position,
+              timestamp,
+              timestamp,
+            ),
         ),
       );
       await db.batch(
@@ -202,9 +224,6 @@ export async function ensureDatabase() {
             .bind(agent.name, position, position, agent.id),
         ),
       );
-
-      const officialIds = OFFICIAL_TEAM.map((agent) => agent.id);
-      const placeholders = officialIds.map(() => '?').join(', ');
       await db
         .prepare(
           `UPDATE support_agents SET is_active = 0, status = 'away', updated_at = ?
@@ -221,9 +240,25 @@ export async function ensureDatabase() {
         .prepare(
           `INSERT OR IGNORE INTO fixed_queue_state
            (id, cursor_position, sequence, next_agent_id, started_at)
-           VALUES (1, ?, 0, NULL, ?)`,
+           VALUES (1, ?, 0, ?, ?)`,
         )
-        .bind(migratedPosition, timestamp)
+        .bind(migratedPosition, OFFICIAL_TEAM[migratedPosition].id, timestamp)
+        .run();
+      await db
+        .prepare(
+          `UPDATE fixed_queue_state
+           SET cursor_position = 0, next_agent_id = ?, started_at = ?
+           WHERE id = 1 AND (
+             cursor_position < 0 OR cursor_position >= ? OR
+             next_agent_id IS NULL OR next_agent_id NOT IN (${placeholders})
+           )`,
+        )
+        .bind(
+          OFFICIAL_TEAM[0].id,
+          timestamp,
+          OFFICIAL_TEAM.length,
+          ...officialIds,
+        )
         .run();
       await db.prepare('PRAGMA optimize').run();
     })().catch((error) => {
@@ -270,14 +305,20 @@ async function securePasswordMatch(provided: string, configured: string) {
 export async function assertAdminPassword(adminPassword: unknown) {
   const configured = (env as unknown as RuntimeEnv).ADMIN_QUEUE_PASSWORD;
   if (!configured) {
-    throw new QueueError('A autorização administrativa ainda não foi configurada.', 503);
+    throw new QueueError(
+      'A autorização administrativa ainda não foi configurada.',
+      503,
+    );
   }
   if (
     typeof adminPassword !== 'string' ||
     adminPassword.length > 256 ||
     !(await securePasswordMatch(adminPassword, configured))
   ) {
-    throw new QueueError('Senha incorreta. Nenhuma alteração foi realizada.', 401);
+    throw new QueueError(
+      'Senha incorreta. Nenhuma alteração foi realizada.',
+      401,
+    );
   }
 }
 
@@ -302,7 +343,9 @@ async function acquireLock(expectedVersion: number) {
 
 async function releaseLock(token: string) {
   await database()
-    .prepare('UPDATE queue_state SET lock_token = NULL WHERE id = 1 AND lock_token = ?')
+    .prepare(
+      'UPDATE queue_state SET lock_token = NULL WHERE id = 1 AND lock_token = ?',
+    )
     .bind(token)
     .run();
 }
@@ -317,7 +360,9 @@ function toAgent(row: AgentRow): Agent {
     queuePosition: Number(row.queue_position),
     initialPosition: Number(row.initial_position),
     todayCount: Number(row.today_count ?? 0),
-    online: Boolean(row.last_seen_at && Date.parse(row.last_seen_at) >= onlineAfter),
+    online: Boolean(
+      row.last_seen_at && Date.parse(row.last_seen_at) >= onlineAfter,
+    ),
   };
 }
 
@@ -339,21 +384,38 @@ async function loadCycleAgents() {
 
 function eligibilityReason(agent: Agent) {
   if (!agent.isActive) return 'inactive';
-  if (!agent.online) return 'offline';
   if (agent.status !== 'available') return agent.status;
   return null;
 }
 
 function scanAvailable(agents: Agent[], startPosition: number) {
-  if (!agents.length) return { target: null as Agent | null, skipped: [] as Agent[] };
+  if (!agents.length) {
+    return {
+      target: null as Agent | null,
+      skipped: [] as Agent[],
+      foundAvailable: false,
+    };
+  }
+  const normalizedStart =
+    Number.isInteger(startPosition) &&
+    startPosition >= 0 &&
+    startPosition < agents.length
+      ? startPosition
+      : 0;
   const skipped: Agent[] = [];
   for (let offset = 0; offset < agents.length; offset += 1) {
-    const position = (startPosition + offset) % agents.length;
+    const position = (normalizedStart + offset) % agents.length;
     const agent = agents[position];
-    if (!eligibilityReason(agent)) return { target: agent, skipped };
+    if (!eligibilityReason(agent)) {
+      return { target: agent, skipped, foundAvailable: true };
+    }
     skipped.push(agent);
   }
-  return { target: null as Agent | null, skipped: [] as Agent[] };
+  return {
+    target: agents[normalizedStart],
+    skipped: [] as Agent[],
+    foundAvailable: false,
+  };
 }
 
 function eventStatement(
@@ -428,10 +490,21 @@ async function reconcileOnce() {
     loadCycleAgents(),
   ]);
   if (!state || !cycle || !agents.length) return false;
-  const start = Math.max(0, Math.min(cycle.cursor_position, agents.length - 1));
-  const { target, skipped } = scanAvailable(agents, start);
-  const nextId = target?.id ?? null;
-  if (cycle.next_agent_id === nextId) return false;
+  const start =
+    Number.isInteger(cycle.cursor_position) &&
+    cycle.cursor_position >= 0 &&
+    cycle.cursor_position < agents.length
+      ? cycle.cursor_position
+      : 0;
+  const { target, skipped, foundAvailable } = scanAvailable(agents, start);
+  const nextId = target?.id ?? OFFICIAL_TEAM[0].id;
+  const nextPosition = target?.queuePosition ?? 0;
+  if (
+    cycle.next_agent_id === nextId &&
+    cycle.cursor_position === nextPosition
+  ) {
+    return false;
+  }
 
   const timestamp = nowIso();
   const token = await acquireLock(Number(state.version));
@@ -445,8 +518,8 @@ async function reconcileOnce() {
                next_agent_id = ?, started_at = ?
            WHERE id = 1`,
         )
-        .bind(target?.queuePosition ?? start, nextId, timestamp),
-      ...(target
+        .bind(nextPosition, nextId, timestamp),
+      ...(target && foundAvailable
         ? automaticSkipStatements(db, skipped, target, timestamp, versionAfter)
         : []),
     ]);
@@ -480,20 +553,26 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
   const date = businessDate();
   const placeholders = OFFICIAL_TEAM.map(() => '?').join(', ');
 
-  const [stateResult, cycleResult, agentsResult, ticketsResult, eventsResult, statsResult] =
-    await Promise.all([
-      db
-        .prepare('SELECT version, updated_at FROM queue_state WHERE id = 1')
-        .first<{ version: number; updated_at: string }>(),
-      db
-        .prepare(
-          `SELECT cursor_position, sequence, next_agent_id, started_at
+  const [
+    stateResult,
+    cycleResult,
+    agentsResult,
+    ticketsResult,
+    eventsResult,
+    statsResult,
+  ] = await Promise.all([
+    db
+      .prepare('SELECT version, updated_at FROM queue_state WHERE id = 1')
+      .first<{ version: number; updated_at: string }>(),
+    db
+      .prepare(
+        `SELECT cursor_position, sequence, next_agent_id, started_at
            FROM fixed_queue_state WHERE id = 1`,
-        )
-        .first<CycleRow>(),
-      db
-        .prepare(
-          `SELECT a.id, a.name, a.status, a.is_active, a.queue_position,
+      )
+      .first<CycleRow>(),
+    db
+      .prepare(
+        `SELECT a.id, a.name, a.status, a.is_active, a.queue_position,
                   a.initial_position, COALESCE(c.today_count, 0) AS today_count,
                   p.last_seen_at
            FROM support_agents a
@@ -513,22 +592,23 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
            ) c ON c.agent_id = a.id
            WHERE a.id IN (${placeholders})
            ORDER BY a.queue_position`,
-        )
-        .bind(date, ...OFFICIAL_TEAM.map((agent) => agent.id))
-        .all<AgentRow>(),
-      db
-        .prepare(
-          `SELECT t.id, t.external_id, t.client, t.owner_agent_id,
+      )
+      .bind(date, ...OFFICIAL_TEAM.map((agent) => agent.id))
+      .all<AgentRow>(),
+    db
+      .prepare(
+        `SELECT t.id, t.external_id, t.client, t.owner_agent_id,
                   a.name AS owner_name, t.started_at
            FROM tickets t
            JOIN support_agents a ON a.id = t.owner_agent_id
-           WHERE t.status = 'open'
+           WHERE t.status = 'open' AND t.owner_agent_id IN (${placeholders})
            ORDER BY t.started_at DESC`,
-        )
-        .all<TicketRow>(),
-      db
-        .prepare(
-          `SELECT e.id, e.action, e.agent_id, a.name AS agent_name,
+      )
+      .bind(...OFFICIAL_TEAM.map((agent) => agent.id))
+      .all<TicketRow>(),
+    db
+      .prepare(
+        `SELECT e.id, e.action, e.agent_id, a.name AS agent_name,
                   b.name AS secondary_agent_name, e.ticket_id, t.external_id,
                   e.details, e.occurred_at
            FROM events e
@@ -536,19 +616,25 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
            LEFT JOIN support_agents b ON b.id = e.secondary_agent_id
            LEFT JOIN tickets t ON t.id = e.ticket_id
            WHERE e.business_date = ?
+             AND (e.agent_id IS NULL OR e.agent_id IN (${placeholders}))
+             AND (e.secondary_agent_id IS NULL OR e.secondary_agent_id IN (${placeholders}))
            ORDER BY e.occurred_at DESC, e.rowid DESC
            LIMIT 100`,
-        )
-        .bind(date)
-        .all<EventRow>(),
-      db
-        .prepare(
-          `SELECT COALESCE(AVG(duration_seconds), 0) AS average_seconds
+      )
+      .bind(
+        date,
+        ...OFFICIAL_TEAM.map((agent) => agent.id),
+        ...OFFICIAL_TEAM.map((agent) => agent.id),
+      )
+      .all<EventRow>(),
+    db
+      .prepare(
+        `SELECT COALESCE(AVG(duration_seconds), 0) AS average_seconds
            FROM tickets WHERE business_date = ? AND status = 'closed'`,
-        )
-        .bind(date)
-        .first<{ average_seconds: number }>(),
-    ]);
+      )
+      .bind(date)
+      .first<{ average_seconds: number }>(),
+  ]);
 
   const agents = agentsResult.results.map(toAgent);
   const events: QueueEvent[] = eventsResult.results.map((row) => ({
@@ -573,18 +659,29 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
   const version = Number(stateResult?.version ?? 0);
   const claimEvent = events.find(
     (event) =>
-      event.action === 'claim' && Number(event.details?.versionAfter) === version,
+      event.action === 'claim' &&
+      Number(event.details?.versionAfter) === version,
   );
   const claimAt = claimEvent ? Date.parse(claimEvent.occurredAt) : Number.NaN;
   const canUndo = Boolean(
     claimEvent?.agentId &&
-      claimEvent.agentName &&
-      Number.isInteger(claimEvent.details?.previousCursorPosition) &&
-      Number.isFinite(claimAt) &&
-      Date.now() <= claimAt + UNDO_WINDOW_MS,
+    claimEvent.agentName &&
+    Number.isInteger(claimEvent.details?.previousCursorPosition) &&
+    Number.isFinite(claimAt) &&
+    Date.now() <= claimAt + UNDO_WINDOW_MS,
   );
+  const storedCursor = Number(cycleResult?.cursor_position ?? 0);
+  const safeCursor =
+    Number.isInteger(storedCursor) &&
+    storedCursor >= 0 &&
+    storedCursor < agents.length
+      ? storedCursor
+      : 0;
   const nextAgent =
-    agents.find((agent) => agent.id === cycleResult?.next_agent_id) ?? null;
+    agents.find((agent) => agent.id === cycleResult?.next_agent_id) ??
+    agents[safeCursor] ??
+    agents[0] ??
+    null;
 
   return {
     version,
@@ -604,14 +701,15 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
       : null,
     turn: {
       sequence: Number(cycleResult?.sequence ?? 0),
-      nextAgentId: cycleResult?.next_agent_id ?? null,
-      cursorPosition: Number(cycleResult?.cursor_position ?? 0),
+      nextAgentId: nextAgent?.id ?? OFFICIAL_TEAM[0].id,
+      cursorPosition: nextAgent?.queuePosition ?? 0,
       startedAt: cycleResult?.started_at ?? stateResult?.updated_at ?? nowIso(),
     },
     stats: {
       todayTotal: agents.reduce((total, agent) => total + agent.todayCount, 0),
       available: agents.filter((agent) => !eligibilityReason(agent)).length,
-      busy: agents.filter((agent) => agent.isActive && agent.status === 'busy').length,
+      busy: agents.filter((agent) => agent.isActive && agent.status === 'busy')
+        .length,
       averageSeconds: Math.round(Number(statsResult?.average_seconds ?? 0)),
     },
   };
@@ -627,6 +725,12 @@ function cycleUpdateStatement(
   fallbackCursor: number,
   timestamp: string,
 ) {
+  const safeFallback =
+    Number.isInteger(fallbackCursor) &&
+    fallbackCursor >= 0 &&
+    fallbackCursor < OFFICIAL_TEAM.length
+      ? fallbackCursor
+      : 0;
   return db
     .prepare(
       `UPDATE fixed_queue_state
@@ -634,7 +738,11 @@ function cycleUpdateStatement(
            next_agent_id = ?, started_at = ?
        WHERE id = 1`,
     )
-    .bind(target?.queuePosition ?? fallbackCursor, target?.id ?? null, timestamp);
+    .bind(
+      target?.queuePosition ?? safeFallback,
+      target?.id ?? OFFICIAL_TEAM[safeFallback].id,
+      timestamp,
+    );
 }
 
 export async function executeCommand(command: QueueCommand) {
@@ -643,7 +751,7 @@ export async function executeCommand(command: QueueCommand) {
     throw new QueueError('Versão da fila inválida. Atualize a página.');
   }
   const before = await getSnapshot();
-  if (before.version !== command.version) {
+  if (before.version !== command.version && command.type !== 'status') {
     throw new QueueError(
       'A fila mudou enquanto você agia. Os dados já foram atualizados.',
       409,
@@ -656,11 +764,22 @@ export async function executeCommand(command: QueueCommand) {
   try {
     switch (command.type) {
       case 'claim': {
-        if (!before.nextAgent || before.nextAgent.id !== command.agentId) {
-          throw new QueueError('Esse suporte não é mais o próximo da fila.', 409);
+        if (
+          !before.nextAgent ||
+          eligibilityReason(before.nextAgent) ||
+          before.nextAgent.id !== command.agentId
+        ) {
+          throw new QueueError(
+            'Esse suporte não é mais o próximo da fila.',
+            409,
+          );
         }
-        const start = (before.nextAgent.queuePosition + 1) % before.agents.length;
-        const { target, skipped } = scanAvailable(before.agents, start);
+        const start =
+          (before.nextAgent.queuePosition + 1) % before.agents.length;
+        const { target, skipped, foundAvailable } = scanAvailable(
+          before.agents,
+          start,
+        );
         const claimEventId = crypto.randomUUID();
         token = await acquireLock(command.version);
         const versionAfter = command.version + 1;
@@ -677,8 +796,14 @@ export async function executeCommand(command: QueueCommand) {
             },
             timestamp,
           }),
-          ...(target
-            ? automaticSkipStatements(db, skipped, target, timestamp, versionAfter)
+          ...(target && foundAvailable
+            ? automaticSkipStatements(
+                db,
+                skipped,
+                target,
+                timestamp,
+                versionAfter,
+              )
             : []),
         ]);
         break;
@@ -686,7 +811,8 @@ export async function executeCommand(command: QueueCommand) {
       case 'undo-claim': {
         const candidate = before.undoCandidate;
         const claimEvent = before.events.find(
-          (event) => event.id === command.claimEventId && event.action === 'claim',
+          (event) =>
+            event.id === command.claimEventId && event.action === 'claim',
         );
         if (
           !candidate ||
@@ -699,10 +825,21 @@ export async function executeCommand(command: QueueCommand) {
             409,
           );
         }
-        const previousCursor = Number(claimEvent.details?.previousCursorPosition);
-        const restored = before.agents.find((agent) => agent.id === candidate.agentId);
-        if (!Number.isInteger(previousCursor) || !restored || eligibilityReason(restored)) {
-          throw new QueueError('Não foi possível restaurar essa vez com segurança.', 409);
+        const previousCursor = Number(
+          claimEvent.details?.previousCursorPosition,
+        );
+        const restored = before.agents.find(
+          (agent) => agent.id === candidate.agentId,
+        );
+        if (
+          !Number.isInteger(previousCursor) ||
+          !restored ||
+          eligibilityReason(restored)
+        ) {
+          throw new QueueError(
+            'Não foi possível restaurar essa vez com segurança.',
+            409,
+          );
         }
         token = await acquireLock(command.version);
         await db.batch([
@@ -722,11 +859,22 @@ export async function executeCommand(command: QueueCommand) {
         break;
       }
       case 'skip': {
-        if (!before.nextAgent || before.nextAgent.id !== command.agentId) {
-          throw new QueueError('Esse suporte não é mais o próximo da fila.', 409);
+        if (
+          !before.nextAgent ||
+          eligibilityReason(before.nextAgent) ||
+          before.nextAgent.id !== command.agentId
+        ) {
+          throw new QueueError(
+            'Esse suporte não é mais o próximo da fila.',
+            409,
+          );
         }
-        const start = (before.nextAgent.queuePosition + 1) % before.agents.length;
-        const { target, skipped } = scanAvailable(before.agents, start);
+        const start =
+          (before.nextAgent.queuePosition + 1) % before.agents.length;
+        const { target, skipped, foundAvailable } = scanAvailable(
+          before.agents,
+          start,
+        );
         token = await acquireLock(command.version);
         const versionAfter = command.version + 1;
         await db.batch([
@@ -742,8 +890,14 @@ export async function executeCommand(command: QueueCommand) {
             },
             timestamp,
           }),
-          ...(target
-            ? automaticSkipStatements(db, skipped, target, timestamp, versionAfter)
+          ...(target && foundAvailable
+            ? automaticSkipStatements(
+                db,
+                skipped,
+                target,
+                timestamp,
+                versionAfter,
+              )
             : []),
         ]);
         break;
@@ -756,16 +910,18 @@ export async function executeCommand(command: QueueCommand) {
         const projected = before.agents.map((item) =>
           item.id === agent.id ? { ...item, status: command.status } : item,
         );
-        const { target, skipped } = scanAvailable(
+        const { target, skipped, foundAvailable } = scanAvailable(
           projected,
           before.turn.cursorPosition,
         );
         const turnChanged = target?.id !== before.turn.nextAgentId;
-        token = await acquireLock(command.version);
-        const versionAfter = command.version + 1;
+        token = await acquireLock(before.version);
+        const versionAfter = before.version + 1;
         await db.batch([
           db
-            .prepare('UPDATE support_agents SET status = ?, updated_at = ? WHERE id = ?')
+            .prepare(
+              'UPDATE support_agents SET status = ?, updated_at = ? WHERE id = ?',
+            )
             .bind(command.status, timestamp, command.agentId),
           eventStatement(db, {
             agentId: command.agentId,
@@ -774,10 +930,23 @@ export async function executeCommand(command: QueueCommand) {
             timestamp,
           }),
           ...(turnChanged
-            ? [cycleUpdateStatement(db, target, before.turn.cursorPosition, timestamp)]
+            ? [
+                cycleUpdateStatement(
+                  db,
+                  target,
+                  before.turn.cursorPosition,
+                  timestamp,
+                ),
+              ]
             : []),
-          ...(turnChanged && target
-            ? automaticSkipStatements(db, skipped, target, timestamp, versionAfter)
+          ...(turnChanged && target && foundAvailable
+            ? automaticSkipStatements(
+                db,
+                skipped,
+                target,
+                timestamp,
+                versionAfter,
+              )
             : []),
         ]);
         break;

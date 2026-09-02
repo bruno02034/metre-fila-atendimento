@@ -31,15 +31,15 @@ concorrente perde a disputa com HTTP 409 e precisa ler o estado atualizado.
 Um integrante recebe a vez somente quando:
 
 - seu acesso e registro de suporte estão ativos;
-- seu status é `available`;
-- existe presença recente, renovada pelo navegador autenticado a cada 20 segundos.
+- seu status é `available`.
 
-A presença expira após 60 segundos. `busy`, `paused`, `away`, inatividade e offline
-tornam a pessoa inelegível apenas naquela passagem do ciclo. A posição oficial não
-muda. O servidor percorre a ordem a partir do ponteiro até encontrar o próximo
-elegível e registra um evento `automatic_skip` para cada pessoa ignorada, incluindo
-motivo e destinatário efetivo. Se ninguém estiver elegível, o próximo fica vazio e
-o ponteiro é preservado até alguém voltar.
+`busy`, `paused`, `away` e inatividade tornam a pessoa inelegível apenas naquela
+passagem do ciclo. A presença online continua sendo exibida e usada pelos alertas,
+mas não muda a distribuição. A posição oficial nunca muda. O servidor percorre a
+ordem a partir do ponteiro até encontrar o próximo elegível e registra um evento
+`automatic_skip` para cada pessoa ignorada, incluindo motivo e destinatário efetivo.
+Se todos estiverem indisponíveis, o ponteiro permanece ligado a um dos dez usuários
+oficiais e o painel mostra uma mensagem separada, sem criar “Ninguém”.
 
 O comando **Pular a vez** é uma decisão operacional manual, não exige senha e também
 apenas avança o ponteiro. Alterar o próprio status não exige senha. Não existe pulo
@@ -75,8 +75,8 @@ salt aleatório. Sessões usam token aleatório em cookie `HttpOnly`, `Secure` e
 `SameSite=Lax`; o banco guarda apenas o hash do token por 8 horas. Após cinco falhas,
 o acesso fica bloqueado por 15 minutos.
 
-Suporte pode consultar a fila, alterar apenas o próprio status, registrar apenas a
-própria vez, pular a própria vez e devolver a própria retirada recente. Administrador
+Suporte pode consultar a fila, alterar o status de qualquer integrante, registrar
+apenas a própria vez, pular a própria vez e devolver a própria retirada recente. Administrador
 pode gerenciar logins, senhas e ativação, além de consultar histórico e estatísticas.
 Alterações administrativas exigem sessão de administrador e confirmação da senha
 administrativa no servidor. A reserva da alteração usa a versão atual do servidor,
