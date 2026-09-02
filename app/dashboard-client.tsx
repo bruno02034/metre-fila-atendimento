@@ -87,7 +87,8 @@ function eventDescription(event: QueueEvent) {
       offline: 'estava offline',
       inactive: 'estava inativo',
     };
-    const reason = reasonLabels[String(event.details?.reason)] ?? 'estava indisponível';
+    const reason =
+      reasonLabels[String(event.details?.reason)] ?? 'estava indisponível';
     return event.secondaryAgentName
       ? `${reason}; atendimento direcionado para ${event.secondaryAgentName}`
       : reason;
@@ -97,13 +98,18 @@ function eventDescription(event: QueueEvent) {
       ? 'Alteração manual autorizada por administrador'
       : '';
   if (event.action === 'transfer' && event.secondaryAgentName) {
-    return [`para ${event.secondaryAgentName}`, auditLabel].filter(Boolean).join(' · ');
+    return [`para ${event.secondaryAgentName}`, auditLabel]
+      .filter(Boolean)
+      .join(' · ');
   }
   if (event.externalId) {
     return [event.externalId, auditLabel].filter(Boolean).join(' · ');
   }
   if (event.action === 'status_change' && event.details?.to) {
-    return [statusMeta[event.details.to as AgentStatus]?.label ?? '', auditLabel]
+    return [
+      statusMeta[event.details.to as AgentStatus]?.label ?? '',
+      auditLabel,
+    ]
       .filter(Boolean)
       .join(' · ');
   }
@@ -118,15 +124,20 @@ export function DashboardClient({
   const { snapshot, pending, refresh, mutate } = useQueue(initialSnapshot);
   const [undoOpen, setUndoOpen] = useState(false);
   const viewer = snapshot.viewer;
-  const viewerAgent = snapshot.agents.find((agent) => agent.id === viewer.agentId);
+  const viewerAgent = snapshot.agents.find(
+    (agent) => agent.id === viewer.agentId,
+  );
+  const hasAvailableAgent = snapshot.stats.available > 0;
   const canOperateNext =
-    viewer.role === 'admin' || snapshot.nextAgent?.id === viewer.agentId;
+    hasAvailableAgent &&
+    (viewer.role === 'admin' || snapshot.nextAgent?.id === viewer.agentId);
 
   const cycleAgents = snapshot.agents;
   const ranking = useMemo(
     () =>
       [...cycleAgents].sort(
-        (a, b) => b.todayCount - a.todayCount || a.queuePosition - b.queuePosition,
+        (a, b) =>
+          b.todayCount - a.todayCount || a.queuePosition - b.queuePosition,
       ),
     [cycleAgents],
   );
@@ -138,7 +149,8 @@ export function DashboardClient({
     } catch (error) {
       toast.add({
         title: 'Atenção',
-        description: error instanceof Error ? error.message : 'Tente novamente.',
+        description:
+          error instanceof Error ? error.message : 'Tente novamente.',
         type: 'error',
       });
       throw error;
@@ -146,7 +158,6 @@ export function DashboardClient({
   }
 
   async function changeStatus(agent: Agent, status: AgentStatus) {
-    if (viewer.role !== 'admin' && agent.id !== viewer.agentId) return;
     if (agent.status === status) return;
     try {
       await run(
@@ -168,7 +179,11 @@ export function DashboardClient({
       <Toaster />
       <header className="border-b border-white/10 bg-[var(--navy)] text-white">
         <div className="mx-auto flex h-16 max-w-[1500px] items-center justify-between px-4 sm:px-6 lg:px-8">
-          <a href="/" className="flex items-center gap-3" aria-label="Ir para o painel">
+          <a
+            href="/"
+            className="flex items-center gap-3"
+            aria-label="Ir para o painel"
+          >
             <img
               src="/metre-logo.png"
               alt=""
@@ -176,13 +191,21 @@ export function DashboardClient({
             />
             <div>
               <p className="font-semibold leading-none tracking-tight">Metre</p>
-              <p className="mt-1 text-[11px] text-white/55">Fila de atendimento</p>
+              <p className="mt-1 text-[11px] text-white/55">
+                Fila de atendimento
+              </p>
             </div>
           </a>
-          <nav className="flex items-center gap-1" aria-label="Navegação principal">
+          <nav
+            className="flex items-center gap-1"
+            aria-label="Navegação principal"
+          >
             <span className="hidden px-3 text-xs text-white/65 md:inline">
-              Olá, <strong className="font-medium text-white">{viewer.name}</strong>
-              {viewerAgent ? ` · ${viewerAgent.queuePosition + 1}ª posição fixa` : ''}
+              Olá,{' '}
+              <strong className="font-medium text-white">{viewer.name}</strong>
+              {viewerAgent
+                ? ` · ${viewerAgent.queuePosition + 1}ª posição fixa`
+                : ''}
             </span>
             <a
               href="/"
@@ -236,24 +259,28 @@ export function DashboardClient({
                 <span className="flex items-center gap-2 text-xs text-white/55">
                   <span
                     className={`size-2 rounded-full ${
-                      snapshot.nextAgent ? 'bg-[var(--brand-light)]' : 'bg-white/30'
+                      hasAvailableAgent
+                        ? 'bg-[var(--brand-light)]'
+                        : 'bg-white/30'
                     }`}
                   />
-                  {snapshot.nextAgent ? 'Disponível' : 'Sem disponibilidade'}
+                  {hasAvailableAgent ? 'Disponível' : 'Todos indisponíveis'}
                 </span>
               </div>
 
               <div>
                 <p className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--brand-light)]">
-                  {snapshot.nextAgent ? 'Agora é a vez de' : 'Aguardando retorno'}
+                  {hasAvailableAgent
+                    ? 'Agora é a vez de'
+                    : 'Ciclo preservado em'}
                 </p>
                 <h1 className="mt-2 break-words text-[clamp(2.7rem,7vw,5.8rem)] font-semibold leading-[.88] tracking-[-0.07em]">
-                  {snapshot.nextAgent?.name ?? 'NINGUÉM'}
+                  {snapshot.nextAgent?.name}
                 </h1>
                 <p className="mt-4 max-w-xl text-sm leading-6 text-white/55">
-                  {snapshot.nextAgent
+                  {hasAvailableAgent && snapshot.nextAgent
                     ? `É a vez de ${snapshot.nextAgent.name}. Ao registrar o atendimento, o ciclo avança sem alterar a ordem oficial.`
-                    : 'Aguardando um integrante disponível e online para retomar o ciclo.'}
+                    : 'Todos os suportes estão indisponíveis no momento. A ordem permanece intacta e o ciclo retoma automaticamente quando alguém ficar disponível.'}
                 </p>
               </div>
 
@@ -296,10 +323,12 @@ export function DashboardClient({
                   <div className="flex flex-col gap-3 rounded-2xl border border-white/15 bg-white/[0.07] p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-xs font-medium text-white">
-                        Retirada registrada para {snapshot.undoCandidate.agentName}
+                        Retirada registrada para{' '}
+                        {snapshot.undoCandidate.agentName}
                       </p>
                       <p className="mt-0.5 text-[11px] leading-4 text-white/55">
-                        Disponível por 5 minutos e somente enquanto a fila não mudar.
+                        Disponível por 5 minutos e somente enquanto a fila não
+                        mudar.
                       </p>
                     </div>
                     <Button
@@ -327,7 +356,10 @@ export function DashboardClient({
                     Indisponíveis são pulados sem perder a posição
                   </p>
                 </div>
-                <Badge variant="outline" className="border-[var(--line)] text-muted-foreground">
+                <Badge
+                  variant="outline"
+                  className="border-[var(--line)] text-muted-foreground"
+                >
                   {cycleAgents.length} pessoas
                 </Badge>
               </div>
@@ -342,8 +374,8 @@ export function DashboardClient({
                         isOwnNext
                           ? 'bg-[var(--brand)]/15 ring-2 ring-[var(--brand)]'
                           : isNext
-                          ? 'bg-[var(--brand-soft)] ring-1 ring-[var(--brand-line)]'
-                          : ''
+                            ? 'bg-[var(--brand-soft)] ring-1 ring-[var(--brand-line)]'
+                            : ''
                       }`}
                     >
                       <span
@@ -360,7 +392,8 @@ export function DashboardClient({
                           {person.name}
                         </span>
                         <span className="text-[10px] text-muted-foreground">
-                          {person.todayCount} hoje · {person.online ? 'online' : 'offline'}
+                          {person.todayCount} hoje ·{' '}
+                          {person.online ? 'online' : 'offline'}
                         </span>
                       </span>
                       <Select
@@ -368,11 +401,7 @@ export function DashboardClient({
                         onValueChange={(value) =>
                           void changeStatus(person, value as AgentStatus)
                         }
-                        disabled={
-                          pending ||
-                          !person.isActive ||
-                          (viewer.role !== 'admin' && person.id !== viewer.agentId)
-                        }
+                        disabled={pending || !person.isActive}
                       >
                         <SelectTrigger
                           size="sm"
@@ -382,15 +411,21 @@ export function DashboardClient({
                           <span
                             className={`status-dot ${statusMeta[person.status].className}`}
                           />
-                          <SelectValue>{statusMeta[person.status].label}</SelectValue>
+                          <SelectValue>
+                            {statusMeta[person.status].label}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          {(Object.keys(statusMeta) as AgentStatus[]).map((status) => (
-                            <SelectItem key={status} value={status}>
-                              <span className={`status-dot ${statusMeta[status].className}`} />
-                              {statusMeta[status].label}
-                            </SelectItem>
-                          ))}
+                          {(Object.keys(statusMeta) as AgentStatus[]).map(
+                            (status) => (
+                              <SelectItem key={status} value={status}>
+                                <span
+                                  className={`status-dot ${statusMeta[status].className}`}
+                                />
+                                {statusMeta[status].label}
+                              </SelectItem>
+                            ),
+                          )}
                         </SelectContent>
                       </Select>
                     </li>
@@ -403,9 +438,17 @@ export function DashboardClient({
 
         <section className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
-            { label: 'Atendimentos hoje', value: snapshot.stats.todayTotal, icon: Headphones },
+            {
+              label: 'Atendimentos hoje',
+              value: snapshot.stats.todayTotal,
+              icon: Headphones,
+            },
             { label: 'Ordem oficial', value: cycleAgents.length, icon: Users },
-            { label: 'Disponíveis agora', value: snapshot.stats.available, icon: Users },
+            {
+              label: 'Disponíveis agora',
+              value: snapshot.stats.available,
+              icon: Users,
+            },
             {
               label: 'Indisponíveis agora',
               value: cycleAgents.length - snapshot.stats.available,
@@ -421,8 +464,12 @@ export function DashboardClient({
                   <Icon className="size-4" aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-[11px] text-muted-foreground">{label}</p>
-                  <p className="mt-0.5 text-xl font-semibold tracking-[-0.04em]">{value}</p>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    {label}
+                  </p>
+                  <p className="mt-0.5 text-xl font-semibold tracking-[-0.04em]">
+                    {value}
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -438,13 +485,18 @@ export function DashboardClient({
             {snapshot.events.length ? (
               <div className="max-h-[310px] divide-y divide-[var(--line)] overflow-y-auto">
                 {snapshot.events.slice(0, 12).map((event) => (
-                  <div key={event.id} className="flex items-center gap-3 px-5 py-3.5">
+                  <div
+                    key={event.id}
+                    className="flex items-center gap-3 px-5 py-3.5"
+                  >
                     <span className="w-10 shrink-0 text-[11px] text-muted-foreground">
                       {formatTime(event.occurredAt)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm">
-                        <strong className="font-medium">{event.agentName || 'Sistema'}</strong>{' '}
+                        <strong className="font-medium">
+                          {event.agentName || 'Sistema'}
+                        </strong>{' '}
                         <span className="text-muted-foreground">
                           {actionLabels[event.action] || event.action}
                         </span>
@@ -470,22 +522,34 @@ export function DashboardClient({
           >
             <ol className="px-5 py-2">
               {ranking.map((agent, index) => {
-                const maximum = Math.max(1, ...ranking.map((item) => item.todayCount));
+                const maximum = Math.max(
+                  1,
+                  ...ranking.map((item) => item.todayCount),
+                );
                 return (
-                  <li key={agent.id} className="grid grid-cols-[24px_1fr_auto] items-center gap-3 py-2.5">
+                  <li
+                    key={agent.id}
+                    className="grid grid-cols-[24px_1fr_auto] items-center gap-3 py-2.5"
+                  >
                     <span className="text-xs font-semibold text-muted-foreground">
                       {index + 1}
                     </span>
                     <div className="min-w-0">
-                      <p className="truncate text-xs font-medium">{agent.name}</p>
+                      <p className="truncate text-xs font-medium">
+                        {agent.name}
+                      </p>
                       <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--surface-muted)]">
                         <div
                           className="h-full rounded-full bg-[var(--brand)]"
-                          style={{ width: `${(agent.todayCount / maximum) * 100}%` }}
+                          style={{
+                            width: `${(agent.todayCount / maximum) * 100}%`,
+                          }}
                         />
                       </div>
                     </div>
-                    <span className="text-sm font-semibold">{agent.todayCount}</span>
+                    <span className="text-sm font-semibold">
+                      {agent.todayCount}
+                    </span>
                   </li>
                 );
               })}
@@ -504,8 +568,8 @@ export function DashboardClient({
           <DialogHeader>
             <DialogTitle>Devolver atendimento?</DialogTitle>
             <DialogDescription>
-              Tem certeza que pegou este atendimento por engano? Ao confirmar, você
-              voltará para o início da fila.
+              Tem certeza que pegou este atendimento por engano? Ao confirmar,
+              você voltará para o início da fila.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -533,7 +597,6 @@ export function DashboardClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </main>
   );
 }
