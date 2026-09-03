@@ -94,72 +94,32 @@ export function businessDate(date = new Date()) {
   }).format(date);
 }
 
-const schemaStatements = [
-  `CREATE TABLE IF NOT EXISTS support_agents (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'busy', 'paused', 'away')),
-    is_active INTEGER NOT NULL DEFAULT 1,
-    queue_position INTEGER NOT NULL,
-    initial_position INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS queue_state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    version INTEGER NOT NULL DEFAULT 0,
-    lock_token TEXT,
-    updated_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS fixed_queue_state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    cursor_position INTEGER NOT NULL DEFAULT 0,
-    sequence INTEGER NOT NULL DEFAULT 0,
-    next_agent_id TEXT REFERENCES support_agents(id),
-    started_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS queue_presence (
-    agent_id TEXT PRIMARY KEY REFERENCES support_agents(id),
-    last_seen_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS tickets (
-    id TEXT PRIMARY KEY,
-    external_id TEXT,
-    client TEXT,
-    owner_agent_id TEXT NOT NULL REFERENCES support_agents(id),
-    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
-    source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'tiflux')),
-    business_date TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    closed_at TEXT,
-    duration_seconds INTEGER
-  )`,
-  `CREATE TABLE IF NOT EXISTS events (
-    id TEXT PRIMARY KEY,
-    agent_id TEXT REFERENCES support_agents(id),
-    secondary_agent_id TEXT REFERENCES support_agents(id),
-    ticket_id TEXT REFERENCES tickets(id),
-    action TEXT NOT NULL,
-    details TEXT,
-    source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'tiflux', 'system')),
-    business_date TEXT NOT NULL,
-    occurred_at TEXT NOT NULL
-  )`,
-  'CREATE UNIQUE INDEX IF NOT EXISTS idx_support_agents_name ON support_agents(name)',
-  'CREATE INDEX IF NOT EXISTS idx_support_agents_active_queue ON support_agents(is_active, queue_position)',
-  'CREATE INDEX IF NOT EXISTS idx_queue_presence_seen ON queue_presence(last_seen_at)',
-  'CREATE INDEX IF NOT EXISTS idx_tickets_owner_status ON tickets(owner_agent_id, status)',
-  'CREATE INDEX IF NOT EXISTS idx_tickets_business_date ON tickets(business_date)',
-  "CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_external_open ON tickets(external_id) WHERE external_id IS NOT NULL AND status = 'open'",
-  'CREATE INDEX IF NOT EXISTS idx_events_business_date_time ON events(business_date, occurred_at)',
-  'CREATE INDEX IF NOT EXISTS idx_events_agent_date ON events(agent_id, business_date)',
-];
+async function queueDatabaseReady(db: D1Database) {
+  const officialIds = OFFICIAL_TEAM.map((agent) => agent.id);
+  const placeholders = officialIds.map(() => '?').join(', ');
+  const ready = await db
+    .prepare(
+      `SELECT q.id
+       FROM queue_state q
+       JOIN fixed_queue_state f ON f.id = q.id
+       WHERE q.id = 1
+         AND f.next_agent_id IN (${placeholders})
+         AND (
+           SELECT COUNT(*) FROM support_agents
+           WHERE id IN (${placeholders})
+         ) = ?`,
+    )
+    .bind(...officialIds, ...officialIds, OFFICIAL_TEAM.length)
+    .first<{ id: number }>();
+  return Boolean(ready);
+}
 
 export async function ensureDatabase() {
   if (!initializePromise) {
     initializePromise = (async () => {
       const db = database();
-      await db.batch(schemaStatements.map((sql) => db.prepare(sql)));
+      if (await queueDatabaseReady(db)) return;
+
       const timestamp = nowIso();
       await db
         .prepare(
