@@ -48,54 +48,31 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-const authSchemaStatements = [
-  `CREATE TABLE IF NOT EXISTS app_users (
-    id TEXT PRIMARY KEY,
-    agent_id TEXT UNIQUE REFERENCES support_agents(id),
-    name TEXT NOT NULL,
-    login TEXT NOT NULL COLLATE NOCASE,
-    password_hash TEXT,
-    role TEXT NOT NULL CHECK (role IN ('support', 'admin')),
-    is_active INTEGER NOT NULL DEFAULT 1,
-    participates_in_queue INTEGER NOT NULL DEFAULT 1,
-    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
-    locked_until TEXT,
-    last_login_at TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS auth_sessions (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES app_users(id),
-    token_hash TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
-    user_agent TEXT
-  )`,
-  `CREATE TABLE IF NOT EXISTS user_presence (
-    user_id TEXT PRIMARY KEY REFERENCES app_users(id),
-    last_seen_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS turn_acknowledgements (
-    user_id TEXT NOT NULL REFERENCES app_users(id),
-    turn_sequence INTEGER NOT NULL,
-    acknowledged_at TEXT NOT NULL,
-    PRIMARY KEY (user_id, turn_sequence)
-  )`,
-  `CREATE TABLE IF NOT EXISTS user_audit_log (
-    id TEXT PRIMARY KEY,
-    user_id TEXT REFERENCES app_users(id),
-    actor_user_id TEXT REFERENCES app_users(id),
-    action TEXT NOT NULL,
-    details TEXT,
-    occurred_at TEXT NOT NULL
-  )`,
-  'CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_login ON app_users(login)',
-  'CREATE INDEX IF NOT EXISTS idx_auth_sessions_token ON auth_sessions(token_hash)',
-  'CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)',
-  'CREATE INDEX IF NOT EXISTS idx_user_audit_user_time ON user_audit_log(user_id, occurred_at)',
-];
+async function authDatabaseReady(db: D1Database) {
+  const officialIds = OFFICIAL_TEAM.map((agent) => agent.id);
+  const placeholders = officialIds.map(() => '?').join(', ');
+  const ready = await db
+    .prepare(
+      `SELECT 1 AS ready
+       WHERE (
+         SELECT COUNT(*) FROM app_users
+         WHERE role = 'support' AND password_hash IS NOT NULL
+           AND agent_id IN (${placeholders})
+       ) = ?
+       AND EXISTS (
+         SELECT 1 FROM app_users
+         WHERE login = 'admin' COLLATE NOCASE AND role = 'admin'
+           AND is_active = 1 AND password_hash IS NOT NULL
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM app_users
+         WHERE login = 'zeze' COLLATE NOCASE AND is_active = 1
+       )`,
+    )
+    .bind(...officialIds, OFFICIAL_TEAM.length)
+    .first<{ ready: number }>();
+  return Boolean(ready);
+}
 
 export class AuthError extends Error {
   constructor(
@@ -230,7 +207,8 @@ export async function ensureAuthDatabase() {
     authInitializePromise = (async () => {
       await ensureDatabase();
       const db = database();
-      await db.batch(authSchemaStatements.map((sql) => db.prepare(sql)));
+      if (await authDatabaseReady(db)) return;
+
       const timestamp = nowIso();
       const officialAgentIds = OFFICIAL_TEAM.map((agent) => agent.id);
       const officialPlaceholders = officialAgentIds.map(() => '?').join(', ');
