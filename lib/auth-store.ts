@@ -441,9 +441,9 @@ export function clearSessionCookie() {
 }
 
 async function sessionRecord(cookieHeader: string | null) {
-  await ensureAuthDatabase();
   const token = parseCookie(cookieHeader, SESSION_COOKIE);
   if (!token) return null;
+  await ensureAuthDatabase();
   const tokenHash = await sha256(token);
   const row = await database()
     .prepare(
@@ -548,6 +548,9 @@ export async function loginUser(
     Date.now() + SESSION_DURATION_SECONDS * 1000,
   ).toISOString();
   const statements = [
+    db
+      .prepare('DELETE FROM auth_sessions WHERE expires_at <= ?')
+      .bind(timestamp),
     db
       .prepare(
         `INSERT INTO auth_sessions
