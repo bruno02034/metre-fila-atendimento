@@ -7,6 +7,25 @@ import type {
   QueueView,
 } from '@/lib/types';
 
+const QUEUE_REFRESH_INTERVAL_MS = 10000;
+const QUEUE_REQUEST_TIMEOUT_MS = 12000;
+
+async function fetchQueue(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    QUEUE_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 export function useQueue(initialSnapshot: QueueView) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [pending, setPending] = useState(false);
@@ -21,7 +40,7 @@ export function useQueue(initialSnapshot: QueueView) {
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
     const refreshPromise = (async () => {
-      const response = await fetch('/api/queue', { cache: 'no-store' });
+      const response = await fetchQueue('/api/queue', { cache: 'no-store' });
       if (response.status === 401) {
         window.location.assign('/login');
         throw new Error('Sua sessão expirou.');
@@ -51,7 +70,7 @@ export function useQueue(initialSnapshot: QueueView) {
       if (!document.hidden && !pending) {
         await refresh().catch(() => undefined);
       }
-      if (active) timer = window.setTimeout(poll, 5000);
+      if (active) timer = window.setTimeout(poll, QUEUE_REFRESH_INTERVAL_MS);
     };
 
     const refreshWhenVisible = () => {
@@ -60,7 +79,7 @@ export function useQueue(initialSnapshot: QueueView) {
       }
     };
 
-    timer = window.setTimeout(poll, 5000);
+    timer = window.setTimeout(poll, QUEUE_REFRESH_INTERVAL_MS);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     window.addEventListener('focus', refreshWhenVisible);
 
@@ -72,14 +91,6 @@ export function useQueue(initialSnapshot: QueueView) {
     };
   }, [pending, refresh]);
 
-  useEffect(() => {
-    const heartbeat = () =>
-      fetch('/api/presence', { method: 'POST' }).catch(() => undefined);
-    void heartbeat();
-    const interval = window.setInterval(heartbeat, 20000);
-    return () => window.clearInterval(interval);
-  }, []);
-
   async function mutate(input: QueueCommandInput) {
     setPending(true);
     try {
@@ -87,7 +98,7 @@ export function useQueue(initialSnapshot: QueueView) {
         ...input,
         version: snapshotRef.current.version,
       } as QueueCommand;
-      const response = await fetch('/api/queue', {
+      const response = await fetchQueue('/api/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(command),
