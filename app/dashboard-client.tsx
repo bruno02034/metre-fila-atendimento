@@ -49,7 +49,7 @@ const statusMeta: Record<AgentStatus, { label: string; className: string }> = {
     label: 'Disponível',
     className: 'status-available',
   },
-  busy: { label: 'Ocupado', className: 'status-busy' },
+  busy: { label: 'Henrique', className: 'status-busy' },
   paused: { label: 'Pausado', className: 'status-paused' },
   away: { label: 'Ausente', className: 'status-away' },
 };
