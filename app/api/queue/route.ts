@@ -3,16 +3,35 @@ import {
   assertSameOrigin,
   authorizeQueueCommand,
   queueViewForUser,
-  recordPresence,
   requireSession,
 } from '@/lib/auth-store';
-import { executeCommand, getSnapshot, QueueError } from '@/lib/queue-store';
+import {
+  executeCommand,
+  getQueueVersion,
+  getSnapshot,
+  QueueError,
+} from '@/lib/queue-store';
 import type { QueueCommand } from '@/lib/types';
 
 export async function GET(request: Request) {
   try {
     const user = await requireSession(request);
-    await recordPresence(user);
+    const versionParameter = new URL(request.url).searchParams.get('version');
+    const requestedVersion =
+      versionParameter === null ? null : Number(versionParameter);
+    if (
+      typeof requestedVersion === 'number' &&
+      Number.isInteger(requestedVersion) &&
+      requestedVersion >= 0
+    ) {
+      const currentVersion = await getQueueVersion();
+      if (currentVersion === requestedVersion) {
+        return new Response(null, {
+          status: 204,
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      }
+    }
     const snapshot = await getSnapshot();
     const view = await queueViewForUser(user, snapshot);
     return Response.json(view, {
@@ -34,11 +53,10 @@ export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
     const user = await requireSession(request);
-    await recordPresence(user);
     const command = (await request.json()) as QueueCommand;
     const before = await getSnapshot();
     authorizeQueueCommand(user, command, before);
-    const snapshot = await executeCommand(command);
+    const snapshot = await executeCommand(command, before);
     const view = await queueViewForUser(user, snapshot);
     return Response.json(view, {
       headers: { 'Cache-Control': 'no-store' },

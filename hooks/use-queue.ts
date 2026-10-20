@@ -7,7 +7,8 @@ import type {
   QueueView,
 } from '@/lib/types';
 
-const QUEUE_REFRESH_INTERVAL_MS = 10000;
+const QUEUE_REFRESH_INTERVAL_MS = 2000;
+const PRESENCE_HEARTBEAT_INTERVAL_MS = 30000;
 const QUEUE_REQUEST_TIMEOUT_MS = 12000;
 
 async function fetchQueue(
@@ -36,15 +37,21 @@ export function useQueue(initialSnapshot: QueueView) {
     snapshotRef.current = snapshot;
   }, [snapshot]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = true) => {
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
     const refreshPromise = (async () => {
-      const response = await fetchQueue('/api/queue', { cache: 'no-store' });
+      const versionQuery = force
+        ? ''
+        : `?version=${encodeURIComponent(snapshotRef.current.version)}`;
+      const response = await fetchQueue(`/api/queue${versionQuery}`, {
+        cache: 'no-store',
+      });
       if (response.status === 401) {
         window.location.assign('/login');
         throw new Error('Sua sessão expirou.');
       }
+      if (response.status === 204) return snapshotRef.current;
       if (!response.ok) throw new Error('Não foi possível atualizar a fila.');
       const next = (await response.json()) as QueueView;
       snapshotRef.current = next;
@@ -68,7 +75,7 @@ export function useQueue(initialSnapshot: QueueView) {
 
     const poll = async () => {
       if (!document.hidden && !pending) {
-        await refresh().catch(() => undefined);
+        await refresh(false).catch(() => undefined);
       }
       if (active) timer = window.setTimeout(poll, QUEUE_REFRESH_INTERVAL_MS);
     };
@@ -90,6 +97,32 @@ export function useQueue(initialSnapshot: QueueView) {
       window.removeEventListener('focus', refreshWhenVisible);
     };
   }, [pending, refresh]);
+
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+
+    const heartbeat = async () => {
+      if (!document.hidden) {
+        const response = await fetchQueue('/api/presence', {
+          method: 'POST',
+        }).catch(() => null);
+        if (response?.status === 401) window.location.assign('/login');
+      }
+      if (active) {
+        timer = window.setTimeout(
+          heartbeat,
+          PRESENCE_HEARTBEAT_INTERVAL_MS,
+        );
+      }
+    };
+
+    timer = window.setTimeout(heartbeat, PRESENCE_HEARTBEAT_INTERVAL_MS);
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
 
   async function mutate(input: QueueCommandInput) {
     setPending(true);
