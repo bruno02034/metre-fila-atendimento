@@ -688,6 +688,14 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
   };
 }
 
+export async function getQueueVersion() {
+  await ensureDatabase();
+  const state = await database()
+    .prepare('SELECT version FROM queue_state WHERE id = 1')
+    .first<{ version: number }>();
+  return Number(state?.version ?? 0);
+}
+
 function cleanText(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
 }
@@ -718,12 +726,15 @@ function cycleUpdateStatement(
     );
 }
 
-export async function executeCommand(command: QueueCommand) {
+export async function executeCommand(
+  command: QueueCommand,
+  currentSnapshot?: QueueSnapshot,
+) {
   await ensureDatabase();
   if (!Number.isInteger(command.version) || command.version < 0) {
     throw new QueueError('Versão da fila inválida. Atualize a página.');
   }
-  const before = await getSnapshot();
+  const before = currentSnapshot ?? (await getSnapshot());
   if (before.version !== command.version && command.type !== 'status') {
     throw new QueueError(
       'A fila mudou enquanto você agia. Os dados já foram atualizados.',
