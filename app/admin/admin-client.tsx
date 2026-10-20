@@ -28,7 +28,7 @@ import type { AgentStatus, ManagedUser, QueueView } from '@/lib/types';
 
 const statusLabels: Record<AgentStatus, string> = {
   available: 'Disponível',
-  busy: 'Ocupado',
+  busy: 'Henrique',
   paused: 'Pausado',
   away: 'Ausente',
 };
