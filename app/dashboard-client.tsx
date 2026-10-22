@@ -75,6 +75,27 @@ function formatTime(value: string) {
   }).format(new Date(value));
 }
 
+function statusLabel(value: unknown) {
+  return statusMeta[value as AgentStatus]?.label ?? String(value ?? '');
+}
+
+function eventHeadline(event: QueueEvent) {
+  if (event.action === 'status_change') {
+    const target = event.agentName || 'usuário não identificado';
+    if (event.source === 'system') {
+      return `Sistema alterou o status de ${target}`;
+    }
+    const actor = event.actorName || 'Autor não registrado';
+    if (event.actorAgentId && event.actorAgentId === event.agentId) {
+      return `${actor} alterou o próprio status`;
+    }
+    return `${actor} alterou o status de ${target}`;
+  }
+  return `${event.agentName || 'Sistema'} ${
+    actionLabels[event.action] || event.action
+  }`;
+}
+
 function eventDescription(event: QueueEvent) {
   if (event.action === 'undo_claim') {
     return 'Voltou para sua vez na fila';
@@ -106,10 +127,13 @@ function eventDescription(event: QueueEvent) {
     return [event.externalId, auditLabel].filter(Boolean).join(' · ');
   }
   if (event.action === 'status_change' && event.details?.to) {
-    return [
-      statusMeta[event.details.to as AgentStatus]?.label ?? '',
-      auditLabel,
-    ]
+    const from = statusLabel(event.details.from);
+    const to = statusLabel(event.details.to);
+    const origin =
+      event.source === 'system'
+        ? 'Mudança automática do sistema'
+        : 'Alteração manual';
+    return [from && to ? `de ${from} para ${to}` : to, origin, auditLabel]
       .filter(Boolean)
       .join(' · ');
   }
@@ -495,11 +519,8 @@ export function DashboardClient({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm">
                         <strong className="font-medium">
-                          {event.agentName || 'Sistema'}
-                        </strong>{' '}
-                        <span className="text-muted-foreground">
-                          {actionLabels[event.action] || event.action}
-                        </span>
+                          {eventHeadline(event)}
+                        </strong>
                       </p>
                       {eventDescription(event) ? (
                         <p className="truncate text-[11px] text-muted-foreground">

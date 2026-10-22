@@ -15,6 +15,13 @@
       "when": 1788290074033,
       "tag": "0001_warm_slyde",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792671231161,
+      "tag": "0002_square_molten_man",
+      "breakpoints": true
     }
   ]
 }

@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     const command = (await request.json()) as QueueCommand;
     const before = await getSnapshot();
     authorizeQueueCommand(user, command, before);
-    const snapshot = await executeCommand(command, before);
+    const snapshot = await executeCommand(command, user, before);
     const view = await queueViewForUser(user, snapshot);
     return Response.json(view, {
       headers: { 'Cache-Control': 'no-store' },

@@ -45,9 +45,13 @@ export type QueueEvent = {
   action: string;
   agentId: string | null;
   agentName: string | null;
+  actorUserId: string | null;
+  actorName: string | null;
+  actorAgentId: string | null;
   secondaryAgentName: string | null;
   ticketId: string | null;
   externalId: string | null;
+  source: 'manual' | 'tiflux' | 'system';
   details: Record<string, unknown> | null;
   occurredAt: string;
 };

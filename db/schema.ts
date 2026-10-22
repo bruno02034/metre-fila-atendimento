@@ -131,7 +131,9 @@ export const userAuditLog = sqliteTable(
     details: text('details'),
     occurredAt: text('occurred_at').notNull(),
   },
-  (table) => [index('idx_user_audit_user_time').on(table.userId, table.occurredAt)],
+  (table) => [
+    index('idx_user_audit_user_time').on(table.userId, table.occurredAt),
+  ],
 );
 
 export const tickets = sqliteTable(
@@ -172,6 +174,8 @@ export const events = sqliteTable(
       () => supportAgents.id,
     ),
     ticketId: text('ticket_id').references(() => tickets.id),
+    actorUserId: text('actor_user_id').references(() => appUsers.id),
+    actorName: text('actor_name'),
     action: text('action').notNull(),
     details: text('details'),
     source: text('source', { enum: ['manual', 'tiflux', 'system'] })
@@ -186,5 +190,6 @@ export const events = sqliteTable(
       table.occurredAt,
     ),
     index('idx_events_agent_date').on(table.agentId, table.businessDate),
+    index('idx_events_actor_time').on(table.actorUserId, table.occurredAt),
   ],
 );

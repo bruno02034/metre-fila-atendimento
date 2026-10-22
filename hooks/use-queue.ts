@@ -1,20 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  QueueCommand,
-  QueueCommandInput,
-  QueueView,
-} from '@/lib/types';
+import type { QueueCommand, QueueCommandInput, QueueView } from '@/lib/types';
+import { createOptimisticQueueView } from '@/lib/queue-optimistic';
 
-const QUEUE_REFRESH_INTERVAL_MS = 2000;
+const QUEUE_REFRESH_INTERVAL_MS = 10000;
+const STREAM_RECONNECT_INTERVAL_MS = 1000;
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 30000;
 const QUEUE_REQUEST_TIMEOUT_MS = 12000;
 
-async function fetchQueue(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-) {
+async function fetchQueue(input: RequestInfo | URL, init?: RequestInit) {
   const controller = new AbortController();
   const timeout = window.setTimeout(
     () => controller.abort(),
@@ -31,6 +26,7 @@ export function useQueue(initialSnapshot: QueueView) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [pending, setPending] = useState(false);
   const snapshotRef = useRef(snapshot);
+  const pendingRef = useRef(false);
   const refreshPromiseRef = useRef<Promise<QueueView> | null>(null);
 
   useEffect(() => {
@@ -54,8 +50,10 @@ export function useQueue(initialSnapshot: QueueView) {
       if (response.status === 204) return snapshotRef.current;
       if (!response.ok) throw new Error('Não foi possível atualizar a fila.');
       const next = (await response.json()) as QueueView;
-      snapshotRef.current = next;
-      setSnapshot(next);
+      if (next.version >= snapshotRef.current.version) {
+        snapshotRef.current = next;
+        setSnapshot(next);
+      }
       return next;
     })();
 
@@ -68,6 +66,64 @@ export function useQueue(initialSnapshot: QueueView) {
       }
     }
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    let source: EventSource | null = null;
+    let reconnectTimer: number | undefined;
+
+    const scheduleReconnect = (delay = STREAM_RECONNECT_INTERVAL_MS) => {
+      if (!active) return;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      reconnectTimer = window.setTimeout(connect, delay);
+    };
+
+    const handleServerChange = () => {
+      source?.close();
+      source = null;
+      if (pendingRef.current) {
+        scheduleReconnect(250);
+        return;
+      }
+      void refresh(false).finally(() => scheduleReconnect(0));
+    };
+
+    function connect() {
+      if (!active || document.hidden || pendingRef.current) {
+        scheduleReconnect();
+        return;
+      }
+      source?.close();
+      source = new EventSource(
+        `/api/queue/stream?version=${encodeURIComponent(snapshotRef.current.version)}`,
+      );
+      source.addEventListener('queue-change', handleServerChange);
+      source.addEventListener('reconnect', handleServerChange);
+      source.onerror = () => {
+        source?.close();
+        source = null;
+        scheduleReconnect();
+      };
+    }
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        source?.close();
+        source = null;
+        return;
+      }
+      scheduleReconnect(0);
+    };
+
+    connect();
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      active = false;
+      source?.close();
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [refresh]);
 
   useEffect(() => {
     let active = true;
@@ -110,10 +166,7 @@ export function useQueue(initialSnapshot: QueueView) {
         if (response?.status === 401) window.location.assign('/login');
       }
       if (active) {
-        timer = window.setTimeout(
-          heartbeat,
-          PRESENCE_HEARTBEAT_INTERVAL_MS,
-        );
+        timer = window.setTimeout(heartbeat, PRESENCE_HEARTBEAT_INTERVAL_MS);
       }
     };
 
@@ -125,11 +178,19 @@ export function useQueue(initialSnapshot: QueueView) {
   }, []);
 
   async function mutate(input: QueueCommandInput) {
+    const confirmedSnapshot = snapshotRef.current;
+    const optimisticSnapshot = createOptimisticQueueView(
+      confirmedSnapshot,
+      input,
+    );
+    pendingRef.current = true;
     setPending(true);
+    snapshotRef.current = optimisticSnapshot;
+    setSnapshot(optimisticSnapshot);
     try {
       const command = {
         ...input,
-        version: snapshotRef.current.version,
+        version: confirmedSnapshot.version,
       } as QueueCommand;
       const response = await fetchQueue('/api/queue', {
         method: 'POST',
@@ -140,13 +201,24 @@ export function useQueue(initialSnapshot: QueueView) {
         error?: string;
       };
       if (!response.ok) {
+        snapshotRef.current = confirmedSnapshot;
+        setSnapshot(confirmedSnapshot);
         if (response.status === 409) await refresh();
         throw new Error(payload.error || 'A operação não pôde ser concluída.');
       }
-      snapshotRef.current = payload;
-      setSnapshot(payload);
+      if (payload.version >= snapshotRef.current.version) {
+        snapshotRef.current = payload;
+        setSnapshot(payload);
+      }
       return payload;
+    } catch (error) {
+      if (snapshotRef.current.version === confirmedSnapshot.version) {
+        snapshotRef.current = confirmedSnapshot;
+        setSnapshot(confirmedSnapshot);
+      }
+      throw error;
     } finally {
+      pendingRef.current = false;
       setPending(false);
     }
   }
