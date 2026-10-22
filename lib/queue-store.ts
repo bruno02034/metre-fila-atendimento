@@ -6,6 +6,7 @@ import type {
   QueueCommand,
   QueueEvent,
   QueueSnapshot,
+  SessionUser,
 } from '@/lib/types';
 
 export const OFFICIAL_TEAM = [
@@ -61,9 +62,13 @@ type EventRow = {
   action: string;
   agent_id: string | null;
   agent_name: string | null;
+  actor_user_id: string | null;
+  actor_name: string | null;
+  actor_agent_id: string | null;
   secondary_agent_name: string | null;
   ticket_id: string | null;
   external_id: string | null;
+  source: 'manual' | 'tiflux' | 'system';
   details: string | null;
   occurred_at: string;
 };
@@ -401,22 +406,37 @@ function eventStatement(
     action: string;
     details?: Record<string, unknown>;
     source?: 'manual' | 'tiflux' | 'system';
+    actor?: Pick<SessionUser, 'id' | 'name' | 'role' | 'agentId'>;
     timestamp: string;
   },
 ) {
   return db
     .prepare(
       `INSERT INTO events
-       (id, agent_id, secondary_agent_id, ticket_id, action, details, source, business_date, occurred_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, agent_id, secondary_agent_id, ticket_id, actor_user_id, actor_name,
+        action, details, source, business_date, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       input.id ?? crypto.randomUUID(),
       input.agentId ?? null,
       input.secondaryAgentId ?? null,
       input.ticketId ?? null,
+      input.actor?.id ?? null,
+      input.actor?.name ?? null,
       input.action,
-      input.details ? JSON.stringify(input.details) : null,
+      input.details
+        ? JSON.stringify({
+            ...input.details,
+            ...(input.actor
+              ? {
+                  actorRole: input.actor.role,
+                  actorAgentId: input.actor.agentId,
+                  origin: 'manual',
+                }
+              : {}),
+          })
+        : null,
       input.source ?? 'manual',
       businessDate(new Date(input.timestamp)),
       input.timestamp,
@@ -582,12 +602,16 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
     db
       .prepare(
         `SELECT e.id, e.action, e.agent_id, a.name AS agent_name,
+                  e.actor_user_id,
+                  COALESCE(e.actor_name, actor.name) AS actor_name,
+                  actor.agent_id AS actor_agent_id,
                   b.name AS secondary_agent_name, e.ticket_id, t.external_id,
-                  e.details, e.occurred_at
+                  e.source, e.details, e.occurred_at
            FROM events e
            LEFT JOIN support_agents a ON a.id = e.agent_id
            LEFT JOIN support_agents b ON b.id = e.secondary_agent_id
            LEFT JOIN tickets t ON t.id = e.ticket_id
+           LEFT JOIN app_users actor ON actor.id = e.actor_user_id
            WHERE e.business_date = ?
              AND (e.agent_id IS NULL OR e.agent_id IN (${placeholders}))
              AND (e.secondary_agent_id IS NULL OR e.secondary_agent_id IN (${placeholders}))
@@ -615,9 +639,13 @@ export async function getSnapshot(): Promise<QueueSnapshot> {
     action: row.action,
     agentId: row.agent_id,
     agentName: row.agent_name,
+    actorUserId: row.actor_user_id,
+    actorName: row.actor_name,
+    actorAgentId: row.actor_agent_id,
     secondaryAgentName: row.secondary_agent_name,
     ticketId: row.ticket_id,
     externalId: row.external_id,
+    source: row.source,
     details: safeJson(row.details),
     occurredAt: row.occurred_at,
   }));
@@ -728,6 +756,7 @@ function cycleUpdateStatement(
 
 export async function executeCommand(
   command: QueueCommand,
+  actor: SessionUser,
   currentSnapshot?: QueueSnapshot,
 ) {
   await ensureDatabase();
@@ -773,6 +802,7 @@ export async function executeCommand(
             id: claimEventId,
             agentId: command.agentId,
             action: 'claim',
+            actor,
             details: {
               previousCursorPosition: before.turn.cursorPosition,
               previousTurnSequence: before.turn.sequence,
@@ -831,6 +861,7 @@ export async function executeCommand(
           eventStatement(db, {
             agentId: candidate.agentId,
             action: 'undo_claim',
+            actor,
             details: {
               claimEventId: candidate.claimEventId,
               reason: 'retirada_por_engano',
@@ -867,6 +898,7 @@ export async function executeCommand(
             agentId: command.agentId,
             secondaryAgentId: target?.id ?? null,
             action: 'skip',
+            actor,
             details: {
               reason: cleanText(command.reason, 160) || 'pulo_manual',
               directedTo: target?.name ?? null,
@@ -910,6 +942,7 @@ export async function executeCommand(
           eventStatement(db, {
             agentId: command.agentId,
             action: 'status_change',
+            actor,
             details: { from: agent.status, to: command.status, versionAfter },
             timestamp,
           }),
