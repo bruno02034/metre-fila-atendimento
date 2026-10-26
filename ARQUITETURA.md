@@ -72,7 +72,11 @@ JOSÉ CARLOS usa `jose.carlos`.
 O administrador inicial usa o login `admin` e a senha já configurada no segredo
 `ADMIN_QUEUE_PASSWORD`. Senhas persistidas usam PBKDF2-SHA256, 100 mil iterações e
 salt aleatório. Sessões usam token aleatório em cookie `HttpOnly`, `Secure` e
-`SameSite=Lax`; o banco guarda apenas o hash do token por 8 horas. Após cinco falhas,
+`SameSite=Lax`; o banco guarda apenas o hash do token. O login permanece válido no
+mesmo dispositivo por 30 dias e sua validade é renovada automaticamente quando
+restarem 7 dias ou menos, inclusive migrando sessões antigas de 8 horas no primeiro
+heartbeat. O encerramento ocorre por logout explícito, desativação da conta, troca
+administrativa de senha ou expiração por inatividade prolongada. Após cinco falhas,
 o acesso fica bloqueado por 15 minutos.
 
 Suporte pode consultar a fila, alterar o status de qualquer integrante, registrar
