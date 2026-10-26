@@ -170,7 +170,7 @@ export function useQueue(initialSnapshot: QueueView) {
       }
     };
 
-    timer = window.setTimeout(heartbeat, PRESENCE_HEARTBEAT_INTERVAL_MS);
+    void heartbeat();
     return () => {
       active = false;
       if (timer !== undefined) window.clearTimeout(timer);

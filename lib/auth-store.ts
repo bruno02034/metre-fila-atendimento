@@ -8,9 +8,13 @@ import type {
   SessionUser,
   UserRole,
 } from '@/lib/types';
+import {
+  SESSION_DURATION_SECONDS,
+  sessionExpiresAt,
+  shouldRenewSession,
+} from '@/lib/session-policy';
 
 const SESSION_COOKIE = 'metre_session';
-const SESSION_DURATION_SECONDS = 8 * 60 * 60;
 // Cloudflare Workers WebCrypto accepts at most 100,000 PBKDF2 iterations.
 const PASSWORD_ITERATIONS = 100_000;
 const MAX_LOGIN_FAILURES = 5;
@@ -449,13 +453,15 @@ async function sessionRecord(cookieHeader: string | null) {
     .prepare(
       `SELECT u.id, u.agent_id, u.name, u.login, u.password_hash, u.role,
               u.is_active, u.participates_in_queue, u.last_login_at, u.created_at,
-              s.id AS session_id
+              s.id AS session_id, s.expires_at AS session_expires_at
        FROM auth_sessions s
        JOIN app_users u ON u.id = s.user_id
        WHERE s.token_hash = ? AND s.expires_at > ? AND u.is_active = 1`,
     )
     .bind(tokenHash, nowIso())
-    .first<UserRow & { session_id: string }>();
+    .first<
+      UserRow & { session_id: string; session_expires_at: string }
+    >();
   return row ?? null;
 }
 
@@ -468,6 +474,31 @@ export async function requireSession(request: Request) {
   const row = await sessionRecord(request.headers.get('cookie'));
   if (!row) throw new AuthError('Sua sessão expirou. Entre novamente.', 401);
   return toSessionUser(row);
+}
+
+export async function requirePersistentSession(request: Request) {
+  const cookieHeader = request.headers.get('cookie');
+  const token = parseCookie(cookieHeader, SESSION_COOKIE);
+  const row = await sessionRecord(cookieHeader);
+  if (!row || !token) {
+    throw new AuthError('Sua sessão expirou. Entre novamente.', 401);
+  }
+
+  let refreshedCookie: string | null = null;
+  if (shouldRenewSession(row.session_expires_at)) {
+    const timestamp = nowIso();
+    await database()
+      .prepare(
+        `UPDATE auth_sessions
+         SET expires_at = ?, last_seen_at = ?
+         WHERE id = ?`,
+      )
+      .bind(sessionExpiresAt(), timestamp, row.session_id)
+      .run();
+    refreshedCookie = sessionCookie(token);
+  }
+
+  return { user: toSessionUser(row), refreshedCookie };
 }
 
 export function requireAdmin(user: SessionUser) {
@@ -544,9 +575,7 @@ export async function loginUser(
   const token = bytesToBase64(crypto.getRandomValues(new Uint8Array(32)));
   const tokenHash = await sha256(token);
   const timestamp = nowIso();
-  const expiresAt = new Date(
-    Date.now() + SESSION_DURATION_SECONDS * 1000,
-  ).toISOString();
+  const expiresAt = sessionExpiresAt();
   const statements = [
     db
       .prepare('DELETE FROM auth_sessions WHERE expires_at <= ?')
