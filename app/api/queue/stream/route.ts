@@ -2,8 +2,10 @@ import { AuthError, requireSession } from '@/lib/auth-store';
 import { getQueueVersion, QueueError } from '@/lib/queue-store';
 
 const encoder = new TextEncoder();
-const CHECK_INTERVAL_MS = 1000;
-const STREAM_LIFETIME_MS = 25000;
+// Compatibilidade temporária com abas que ainda estejam usando uma versão antiga.
+// Clientes novos usam a consulta condicional leve de /api/queue.
+const CHECK_INTERVAL_MS = 5000;
+const STREAM_LIFETIME_MS = 20000;
 const HEARTBEAT_INTERVAL_MS = 10000;
 
 function wait(milliseconds: number) {

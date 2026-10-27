@@ -4,8 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { QueueCommand, QueueCommandInput, QueueView } from '@/lib/types';
 import { createOptimisticQueueView } from '@/lib/queue-optimistic';
 
-const QUEUE_REFRESH_INTERVAL_MS = 10000;
-const STREAM_RECONNECT_INTERVAL_MS = 1000;
+const QUEUE_REFRESH_INTERVAL_MS = 5000;
 const PRESENCE_HEARTBEAT_INTERVAL_MS = 30000;
 const QUEUE_REQUEST_TIMEOUT_MS = 12000;
 
@@ -66,64 +65,6 @@ export function useQueue(initialSnapshot: QueueView) {
       }
     }
   }, []);
-
-  useEffect(() => {
-    let active = true;
-    let source: EventSource | null = null;
-    let reconnectTimer: number | undefined;
-
-    const scheduleReconnect = (delay = STREAM_RECONNECT_INTERVAL_MS) => {
-      if (!active) return;
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      reconnectTimer = window.setTimeout(connect, delay);
-    };
-
-    const handleServerChange = () => {
-      source?.close();
-      source = null;
-      if (pendingRef.current) {
-        scheduleReconnect(250);
-        return;
-      }
-      void refresh(false).finally(() => scheduleReconnect(0));
-    };
-
-    function connect() {
-      if (!active || document.hidden || pendingRef.current) {
-        scheduleReconnect();
-        return;
-      }
-      source?.close();
-      source = new EventSource(
-        `/api/queue/stream?version=${encodeURIComponent(snapshotRef.current.version)}`,
-      );
-      source.addEventListener('queue-change', handleServerChange);
-      source.addEventListener('reconnect', handleServerChange);
-      source.onerror = () => {
-        source?.close();
-        source = null;
-        scheduleReconnect();
-      };
-    }
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        source?.close();
-        source = null;
-        return;
-      }
-      scheduleReconnect(0);
-    };
-
-    connect();
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => {
-      active = false;
-      source?.close();
-      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [refresh]);
 
   useEffect(() => {
     let active = true;
