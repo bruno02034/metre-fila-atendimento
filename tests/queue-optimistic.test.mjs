@@ -50,6 +50,7 @@ function snapshot() {
       role: 'support',
       isActive: true,
       participatesInQueue: true,
+      canSkipOthers: false,
       passwordConfigured: true,
     },
     turnAlert: { key: null, shouldAlert: false, acknowledgedAt: null },

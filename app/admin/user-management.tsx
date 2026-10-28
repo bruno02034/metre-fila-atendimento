@@ -36,6 +36,7 @@ type FormState = {
   role: UserRole;
   isActive: boolean;
   participatesInQueue: boolean;
+  canSkipOthers: boolean;
 };
 
 const emptyForm: FormState = {
@@ -46,6 +47,7 @@ const emptyForm: FormState = {
   role: 'admin',
   isActive: true,
   participatesInQueue: false,
+  canSkipOthers: true,
 };
 
 export function UserManagement({
@@ -78,6 +80,7 @@ export function UserManagement({
       role: user.role,
       isActive: user.isActive,
       participatesInQueue: user.participatesInQueue,
+      canSkipOthers: user.canSkipOthers,
     });
     setFormError('');
     setFormOpen(true);
@@ -125,6 +128,7 @@ export function UserManagement({
           role: form.role,
           isActive: form.isActive,
           participatesInQueue: form.participatesInQueue,
+          canSkipOthers: form.canSkipOthers,
         }),
       });
       const payload = (await response.json()) as {
@@ -169,7 +173,7 @@ export function UserManagement({
             <TableHeader>
               <TableRow>
                 <TableHead className="pl-5">Usuário</TableHead>
-                <TableHead>Perfil</TableHead>
+                <TableHead>Nível</TableHead>
                 <TableHead>Fila</TableHead>
                 <TableHead>Presença</TableHead>
                 <TableHead>Acesso</TableHead>
@@ -185,7 +189,11 @@ export function UserManagement({
                   </TableCell>
                   <TableCell>
                     <Badge variant="outline">
-                      {user.role === 'admin' ? 'Administrador' : 'Suporte'}
+                      {user.role === 'admin'
+                        ? 'Administrador'
+                        : user.canSkipOthers
+                          ? 'Supervisor'
+                          : 'Padrão'}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
@@ -256,18 +264,42 @@ export function UserManagement({
               <Field label="Perfil">
                 <Input value={form.participatesInQueue ? 'Suporte — sequência oficial' : 'Administrador'} disabled />
               </Field>
+              <Field label="Nível operacional">
+                <Input
+                  value={
+                    form.participatesInQueue
+                      ? form.canSkipOthers
+                        ? 'Supervisor — pode pular outras pessoas'
+                        : 'Padrão — somente a própria vez'
+                      : 'Administrador — controle total'
+                  }
+                  disabled
+                />
+              </Field>
               <Field label="Posição na fila">
                 <Input
-                  value={form.participatesInQueue ? `${(users.find((user) => user.id === form.id)?.queuePosition ?? 0) + 1}ª posição fixa` : 'Não participa'}
+                  value={
+                    form.participatesInQueue
+                      ? `${(users.find((user) => user.id === form.id)?.queuePosition ?? 0) + 1}ª posição fixa`
+                      : 'Não participa'
+                  }
                   disabled
                 />
               </Field>
               <ToggleRow label="Usuário ativo" checked={form.isActive} onCheckedChange={(checked) => setForm({ ...form, isActive: checked })} />
-              <div className="flex items-center rounded-xl border border-[var(--line)] px-3 py-2.5 text-xs font-medium text-muted-foreground">
-                {form.participatesInQueue
-                  ? 'Participação fixa na ordem oficial'
-                  : 'Sem participação na fila'}
-              </div>
+              {form.participatesInQueue ? (
+                <ToggleRow
+                  label="Pode pular a vez de outras pessoas"
+                  checked={form.canSkipOthers}
+                  onCheckedChange={(checked) =>
+                    setForm({ ...form, canSkipOthers: checked })
+                  }
+                />
+              ) : (
+                <div className="flex items-center rounded-xl border border-[var(--line)] px-3 py-2.5 text-xs font-medium text-muted-foreground">
+                  Administradores possuem controle total
+                </div>
+              )}
             </div>
             {formError ? <p className="mt-3 text-xs text-destructive" role="alert">{formError}</p> : null}
             <DialogFooter className="mt-4">

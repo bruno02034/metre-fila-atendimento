@@ -43,6 +43,7 @@ import type {
   QueueEvent,
   QueueView,
 } from '@/lib/types';
+import { canSkipAgent } from '@/lib/queue-permissions';
 
 const statusMeta: Record<AgentStatus, { label: string; className: string }> = {
   available: {
@@ -152,9 +153,14 @@ export function DashboardClient({
     (agent) => agent.id === viewer.agentId,
   );
   const hasAvailableAgent = snapshot.stats.available > 0;
-  const canOperateNext =
+  const canClaimNext =
     hasAvailableAgent &&
     (viewer.role === 'admin' || snapshot.nextAgent?.id === viewer.agentId);
+  const canSkipNext = Boolean(
+    hasAvailableAgent &&
+      snapshot.nextAgent &&
+      canSkipAgent(viewer, snapshot.nextAgent.id),
+  );
 
   const cycleAgents = snapshot.agents;
   const ranking = useMemo(
@@ -313,7 +319,7 @@ export function DashboardClient({
                   <Button
                     size="lg"
                     className="h-12 rounded-xl bg-[var(--brand)] px-5 font-semibold text-white shadow-[0_8px_24px_rgb(194_70_26/24%)] hover:bg-[var(--brand-strong)]"
-                    disabled={!snapshot.nextAgent || !canOperateNext || pending}
+                    disabled={!snapshot.nextAgent || !canClaimNext || pending}
                     onClick={() => {
                       if (!snapshot.nextAgent) return;
                       void run(
@@ -325,22 +331,24 @@ export function DashboardClient({
                     Peguei atendimento
                     <ArrowRight data-icon="inline-end" />
                   </Button>
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    className="h-12 rounded-xl border-white/15 bg-white/5 px-5 text-white hover:bg-white/10 hover:text-white"
-                    disabled={!snapshot.nextAgent || !canOperateNext || pending}
-                    onClick={() => {
-                      if (!snapshot.nextAgent) return;
-                      void run(
-                        { type: 'skip', agentId: snapshot.nextAgent.id },
-                        'Vez pulada; fila atualizada',
-                      ).catch(() => undefined);
-                    }}
-                  >
-                    <RotateCcw data-icon="inline-start" />
-                    Pular a vez
-                  </Button>
+                  {canSkipNext ? (
+                    <Button
+                      size="lg"
+                      variant="outline"
+                      className="h-12 rounded-xl border-white/15 bg-white/5 px-5 text-white hover:bg-white/10 hover:text-white"
+                      disabled={pending}
+                      onClick={() => {
+                        if (!snapshot.nextAgent) return;
+                        void run(
+                          { type: 'skip', agentId: snapshot.nextAgent.id },
+                          'Vez pulada; fila atualizada',
+                        ).catch(() => undefined);
+                      }}
+                    >
+                      <RotateCcw data-icon="inline-start" />
+                      Pular a vez
+                    </Button>
+                  ) : null}
                 </div>
 
                 {snapshot.undoCandidate ? (

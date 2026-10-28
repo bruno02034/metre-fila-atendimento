@@ -9,6 +9,7 @@ export type SessionUser = {
   role: UserRole;
   isActive: boolean;
   participatesInQueue: boolean;
+  canSkipOthers: boolean;
   passwordConfigured: boolean;
 };
 

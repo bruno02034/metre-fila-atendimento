@@ -25,6 +25,7 @@ export type UserAdminInput = {
   role: UserRole;
   isActive: boolean;
   participatesInQueue: boolean;
+  canSkipOthers: boolean;
   position?: number | null;
 };
 
@@ -36,6 +37,7 @@ type ExistingUser = {
   role: UserRole;
   is_active: number;
   participates_in_queue: number;
+  can_skip_others: number;
 };
 
 function database() {
@@ -107,7 +109,8 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
   const existing = input.id
     ? await db
         .prepare(
-          `SELECT id, agent_id, name, login, role, is_active, participates_in_queue
+          `SELECT id, agent_id, name, login, role, is_active,
+                  participates_in_queue, can_skip_others
            FROM app_users WHERE id = ?`,
         )
         .bind(input.id)
@@ -180,6 +183,7 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
             `UPDATE app_users
              SET name = ?, login = ?, role = ?, is_active = ?,
                  participates_in_queue = ?,
+                 can_skip_others = ?,
                  password_hash = COALESCE(?, password_hash), updated_at = ?
              WHERE id = ?`,
           )
@@ -189,6 +193,7 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
             official ? 'support' : 'admin',
             input.isActive ? 1 : 0,
             official ? 1 : 0,
+            official ? (input.canSkipOthers === true ? 1 : 0) : 1,
             passwordHash,
             timestamp,
             existing.id,
@@ -200,8 +205,8 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
           .prepare(
             `INSERT INTO app_users
              (id, agent_id, name, login, password_hash, role, is_active,
-              participates_in_queue, created_at, updated_at)
-             VALUES (?, NULL, ?, ?, ?, 'admin', ?, 0, ?, ?)`,
+              participates_in_queue, can_skip_others, created_at, updated_at)
+             VALUES (?, NULL, ?, ?, ?, 'admin', ?, 0, 1, ?, ?)`,
           )
           .bind(
             userId,
@@ -253,6 +258,7 @@ export async function saveManagedUser(input: UserAdminInput, actor: SessionUser)
             role: official ? 'support' : 'admin',
             isActive: input.isActive,
             fixedQueueOrder: Boolean(official),
+            canSkipOthers: official ? input.canSkipOthers === true : true,
           }),
           timestamp,
         ),

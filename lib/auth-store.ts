@@ -13,6 +13,7 @@ import {
   sessionExpiresAt,
   shouldRenewSession,
 } from '@/lib/session-policy';
+import { canSkipAgent } from '@/lib/queue-permissions';
 
 const SESSION_COOKIE = 'metre_session';
 // Cloudflare Workers WebCrypto accepts at most 100,000 PBKDF2 iterations.
@@ -35,6 +36,7 @@ type UserRow = {
   role: UserRole;
   is_active: number;
   participates_in_queue: number;
+  can_skip_others: number;
   last_login_at: string | null;
   created_at: string;
   status?: string | null;
@@ -76,6 +78,32 @@ async function authDatabaseReady(db: D1Database) {
     .bind(...officialIds, OFFICIAL_TEAM.length)
     .first<{ ready: number }>();
   return Boolean(ready);
+}
+
+async function ensureUserPermissionColumns(db: D1Database) {
+  const columns = await db
+    .prepare('PRAGMA table_info(app_users)')
+    .all<{ name: string }>();
+  if (!columns.results.some((column) => column.name === 'can_skip_others')) {
+    try {
+      await db
+        .prepare(
+          'ALTER TABLE app_users ADD COLUMN can_skip_others INTEGER NOT NULL DEFAULT 0',
+        )
+        .run();
+    } catch (error) {
+      const refreshedColumns = await db
+        .prepare('PRAGMA table_info(app_users)')
+        .all<{ name: string }>();
+      if (
+        !refreshedColumns.results.some(
+          (column) => column.name === 'can_skip_others',
+        )
+      ) {
+        throw error;
+      }
+    }
+  }
 }
 
 export class AuthError extends Error {
@@ -202,6 +230,7 @@ function toSessionUser(row: UserRow): SessionUser {
     role: row.role,
     isActive: Boolean(row.is_active),
     participatesInQueue: Boolean(row.participates_in_queue),
+    canSkipOthers: row.role === 'admin' || Boolean(row.can_skip_others),
     passwordConfigured: Boolean(row.password_hash),
   };
 }
@@ -211,6 +240,7 @@ export async function ensureAuthDatabase() {
     authInitializePromise = (async () => {
       await ensureDatabase();
       const db = database();
+      await ensureUserPermissionColumns(db);
       if (await authDatabaseReady(db)) return;
 
       const timestamp = nowIso();
@@ -452,7 +482,8 @@ async function sessionRecord(cookieHeader: string | null) {
   const row = await database()
     .prepare(
       `SELECT u.id, u.agent_id, u.name, u.login, u.password_hash, u.role,
-              u.is_active, u.participates_in_queue, u.last_login_at, u.created_at,
+              u.is_active, u.participates_in_queue, u.can_skip_others,
+              u.last_login_at, u.created_at,
               s.id AS session_id, s.expires_at AS session_expires_at
        FROM auth_sessions s
        JOIN app_users u ON u.id = s.user_id
@@ -526,7 +557,7 @@ export async function loginUser(
   const row = await db
     .prepare(
       `SELECT id, agent_id, name, login, password_hash, role, is_active,
-              participates_in_queue, failed_login_attempts, locked_until,
+              participates_in_queue, can_skip_others, failed_login_attempts, locked_until,
               last_login_at, created_at
        FROM app_users WHERE login = ?`,
     )
@@ -755,8 +786,10 @@ export function authorizeQueueCommand(
   }
   switch (command.type) {
     case 'claim':
-    case 'skip':
       if (command.agentId === user.agentId) return;
+      break;
+    case 'skip':
+      if (canSkipAgent(user, command.agentId)) return;
       break;
     case 'undo-claim':
       if (snapshot.undoCandidate?.agentId === user.agentId) return;
@@ -773,7 +806,8 @@ export async function listManagedUsers(): Promise<ManagedUser[]> {
   const rows = await database()
     .prepare(
       `SELECT u.id, u.agent_id, u.name, u.login, u.password_hash, u.role,
-              u.is_active, u.participates_in_queue, u.last_login_at, u.created_at,
+              u.is_active, u.participates_in_queue, u.can_skip_others,
+              u.last_login_at, u.created_at,
               a.status, a.queue_position, p.last_seen_at
        FROM app_users u
        LEFT JOIN support_agents a ON a.id = u.agent_id

@@ -74,6 +74,9 @@ export const appUsers = sqliteTable(
     participatesInQueue: integer('participates_in_queue', { mode: 'boolean' })
       .notNull()
       .default(true),
+    canSkipOthers: integer('can_skip_others', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
     lockedUntil: text('locked_until'),
     lastLoginAt: text('last_login_at'),
