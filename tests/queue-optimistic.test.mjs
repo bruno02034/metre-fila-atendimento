@@ -82,6 +82,24 @@ test('mudança de status recalcula a vez sem alterar a ordem fixa', () => {
     current.agents.map((item) => item.queuePosition),
   );
   assert.equal(result.stats.available, 1);
+  assert.equal(result.turn.cursorPosition, current.turn.cursorPosition);
+});
+
+test('suporte disponível novamente recupera a vez antes de qualquer retirada', () => {
+  const unavailable = createOptimisticQueueView(snapshot(), {
+    type: 'status',
+    agentId: 'henrique',
+    status: 'away',
+  });
+  const availableAgain = createOptimisticQueueView(unavailable, {
+    type: 'status',
+    agentId: 'henrique',
+    status: 'available',
+  });
+  assert.equal(unavailable.nextAgent.id, 'vitor');
+  assert.equal(unavailable.turn.cursorPosition, 0);
+  assert.equal(availableAgain.nextAgent.id, 'henrique');
+  assert.equal(availableAgain.turn.cursorPosition, 0);
 });
 
 test('devolução restaura a vez e desfaz a contagem visual', () => {

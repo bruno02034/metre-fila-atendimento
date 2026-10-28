@@ -489,32 +489,23 @@ async function reconcileOnce() {
     cycle.cursor_position < agents.length
       ? cycle.cursor_position
       : 0;
-  const { target, skipped, foundAvailable } = scanAvailable(agents, start);
+  const { target } = scanAvailable(agents, start);
   const nextId = target?.id ?? OFFICIAL_TEAM[0].id;
-  const nextPosition = target?.queuePosition ?? 0;
-  if (
-    cycle.next_agent_id === nextId &&
-    cycle.cursor_position === nextPosition
-  ) {
+  if (cycle.next_agent_id === nextId) {
     return false;
   }
 
   const timestamp = nowIso();
   const token = await acquireLock(Number(state.version));
   try {
-    const versionAfter = Number(state.version) + 1;
     await db.batch([
       db
         .prepare(
           `UPDATE fixed_queue_state
-           SET cursor_position = ?, sequence = sequence + 1,
-               next_agent_id = ?, started_at = ?
+           SET sequence = sequence + 1, next_agent_id = ?, started_at = ?
            WHERE id = 1`,
         )
-        .bind(nextPosition, nextId, timestamp),
-      ...(target && foundAvailable
-        ? automaticSkipStatements(db, skipped, target, timestamp, versionAfter)
-        : []),
+        .bind(nextId, timestamp),
     ]);
     return true;
   } finally {
@@ -754,6 +745,27 @@ function cycleUpdateStatement(
     );
 }
 
+function displayedTurnUpdateStatement(
+  db: D1Database,
+  target: Agent | null,
+  fallbackCursor: number,
+  timestamp: string,
+) {
+  const safeFallback =
+    Number.isInteger(fallbackCursor) &&
+    fallbackCursor >= 0 &&
+    fallbackCursor < OFFICIAL_TEAM.length
+      ? fallbackCursor
+      : 0;
+  return db
+    .prepare(
+      `UPDATE fixed_queue_state
+       SET sequence = sequence + 1, next_agent_id = ?, started_at = ?
+       WHERE id = 1`,
+    )
+    .bind(target?.id ?? OFFICIAL_TEAM[safeFallback].id, timestamp);
+}
+
 export async function executeCommand(
   command: QueueCommand,
   actor: SessionUser,
@@ -926,7 +938,7 @@ export async function executeCommand(
         const projected = before.agents.map((item) =>
           item.id === agent.id ? { ...item, status: command.status } : item,
         );
-        const { target, skipped, foundAvailable } = scanAvailable(
+        const { target } = scanAvailable(
           projected,
           before.turn.cursorPosition,
         );
@@ -948,22 +960,13 @@ export async function executeCommand(
           }),
           ...(turnChanged
             ? [
-                cycleUpdateStatement(
+                displayedTurnUpdateStatement(
                   db,
                   target,
                   before.turn.cursorPosition,
                   timestamp,
                 ),
               ]
-            : []),
-          ...(turnChanged && target && foundAvailable
-            ? automaticSkipStatements(
-                db,
-                skipped,
-                target,
-                timestamp,
-                versionAfter,
-              )
             : []),
         ]);
         break;

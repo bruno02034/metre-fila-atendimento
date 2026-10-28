@@ -54,8 +54,6 @@ export function createOptimisticQueueView(
             ...snapshot.turn,
             sequence: snapshot.turn.sequence + 1,
             nextAgentId: nextAgent?.id ?? null,
-            cursorPosition:
-              nextAgent?.queuePosition ?? snapshot.turn.cursorPosition,
           }
         : snapshot.turn,
     };
