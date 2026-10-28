@@ -8,7 +8,9 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "build:cloudflare": "vinext build && node scripts/prepare-cloudflare-deploy.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
+    "deploy:cloudflare": "pnpm run build:cloudflare && wrangler deploy --config dist/server/wrangler.production.json",
     "lint": "oxlint",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate"

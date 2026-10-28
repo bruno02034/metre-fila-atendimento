@@ -1,0 +1,1 @@
+ALTER TABLE `app_users` ADD `can_skip_others` integer DEFAULT false NOT NULL;
