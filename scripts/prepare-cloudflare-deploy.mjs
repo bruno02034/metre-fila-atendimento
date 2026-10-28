@@ -35,6 +35,8 @@ config.d1_databases = [
   },
 ];
 config.observability = { enabled: true };
+config.workers_dev = true;
+config.preview_urls = true;
 
 await writeFile(productionConfigPath, `${JSON.stringify(config, null, 2)}\n`);
 
