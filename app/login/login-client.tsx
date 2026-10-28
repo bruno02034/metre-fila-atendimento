@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 
+const LOGIN_REQUEST_TIMEOUT_MS = 12_000;
+
 export function LoginClient() {
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
@@ -17,20 +19,31 @@ export function LoginClient() {
     if (!login || !password || pending) return;
     setPending(true);
     setError('');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      LOGIN_REQUEST_TIMEOUT_MS,
+    );
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ login, password }),
+        signal: controller.signal,
       });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(payload.error || 'Não foi possível entrar.');
       window.location.assign('/');
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : 'Não foi possível entrar.',
+        controller.signal.aborted
+          ? 'O servidor demorou para responder. Tente entrar novamente.'
+          : submitError instanceof Error
+            ? submitError.message
+            : 'Não foi possível entrar.',
       );
     } finally {
+      window.clearTimeout(timeout);
       setPending(false);
     }
   }
